@@ -1,0 +1,330 @@
+[
+    {
+        "variables": [
+            "feed_ffa_pct"
+        ],
+        "rsquared": 0.1260065281224796,
+        "rsquared_adj": 0.12338192310182639,
+        "aic": 1915.0197199178301,
+        "bic": 1922.6479809814803
+    },
+    {
+        "variables": [
+            "feed_mi_pct"
+        ],
+        "rsquared": 0.0005959454815517296,
+        "rsquared_adj": -0.002405267895380536,
+        "aic": 1959.9386134918022,
+        "bic": 1967.5668745554524
+    },
+    {
+        "variables": [
+            "feed_iv"
+        ],
+        "rsquared": 0.005754193391267259,
+        "rsquared_adj": 0.0027684702482980716,
+        "aic": 1958.205092536671,
+        "bic": 1965.833353600321
+    },
+    {
+        "variables": [
+            "feed_dobi"
+        ],
+        "rsquared": 4.066945929959154e-05,
+        "rsquared_adj": -0.0029622114131950816,
+        "aic": 1960.1246901936436,
+        "bic": 1967.7529512572937
+    },
+    {
+        "variables": [
+            "feed_car_pv"
+        ],
+        "rsquared": 0.002118753346956659,
+        "rsquared_adj": -0.0008778870333827626,
+        "aic": 1959.4277793776555,
+        "bic": 1967.0560404413056
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct"
+        ],
+        "rsquared": 0.12608319461951933,
+        "rsquared_adj": 0.12081863555096217,
+        "aic": 1916.990332509496,
+        "bic": 1928.4327241049712
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_iv"
+        ],
+        "rsquared": 0.12609670241448656,
+        "rsquared_adj": 0.12083222471818822,
+        "aic": 1916.9851545036972,
+        "bic": 1928.4275460991723
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_dobi"
+        ],
+        "rsquared": 0.12630636407029472,
+        "rsquared_adj": 0.12104314939601934,
+        "aic": 1916.904773663372,
+        "bic": 1928.347165258847
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12617996782749696,
+        "rsquared_adj": 0.12091599173007217,
+        "aic": 1916.9532342187133,
+        "bic": 1928.3956258141884
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_iv"
+        ],
+        "rsquared": 0.006207713857781516,
+        "rsquared_adj": 0.00022101333885238272,
+        "aic": 1960.052249027815,
+        "bic": 1971.49464062329
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_dobi"
+        ],
+        "rsquared": 0.0006486897856714524,
+        "rsquared_adj": -0.005371498830077481,
+        "aic": 1961.920933147128,
+        "bic": 1973.363324742603
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.0026035937237275375,
+        "rsquared_adj": -0.0034048183622741313,
+        "aic": 1961.2649734351576,
+        "bic": 1972.7073650306327
+    },
+    {
+        "variables": [
+            "feed_iv",
+            "feed_dobi"
+        ],
+        "rsquared": 0.006058276992242706,
+        "rsquared_adj": 7.067625123202692e-05,
+        "aic": 1960.1026192985044,
+        "bic": 1971.5450108939795
+    },
+    {
+        "variables": [
+            "feed_iv",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.010830088171663643,
+        "rsquared_adj": 0.004871233281131371,
+        "aic": 1958.4904459823833,
+        "bic": 1969.9328375778584
+    },
+    {
+        "variables": [
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.005622827907719508,
+        "rsquared_adj": -0.0003673960205472504,
+        "aic": 1960.2493517426883,
+        "bic": 1971.6917433381634
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_iv"
+        ],
+        "rsquared": 0.12617017190985913,
+        "rsquared_adj": 0.11825026410239559,
+        "aic": 1918.9569896991254,
+        "bic": 1934.2135118264257
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_dobi"
+        ],
+        "rsquared": 0.12637332364769915,
+        "rsquared_adj": 0.1184552570946571,
+        "aic": 1918.8790983956108,
+        "bic": 1934.135620522911
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12624825743793988,
+        "rsquared_adj": 0.11832905735429577,
+        "aic": 1918.9270527252365,
+        "bic": 1934.1835748525368
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_iv",
+            "feed_dobi"
+        ],
+        "rsquared": 0.12655826396324854,
+        "rsquared_adj": 0.11864187360641998,
+        "aic": 1918.8081738622598,
+        "bic": 1934.06469598956
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_iv",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12640442702039367,
+        "rsquared_adj": 0.11848664237103168,
+        "aic": 1918.8671713155181,
+        "bic": 1934.1236934428184
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12630664735297203,
+        "rsquared_adj": 0.11838797648305932,
+        "aic": 1918.9046650443913,
+        "bic": 1934.1611871716916
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_dobi"
+        ],
+        "rsquared": 0.006475770413232995,
+        "rsquared_adj": -0.0025289809123267837,
+        "aic": 1961.9618769648746,
+        "bic": 1977.2183990921749
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.011102701305053087,
+        "rsquared_adj": 0.0021398859090263622,
+        "aic": 1960.3981079669936,
+        "bic": 1975.654630094294
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.006097752760639175,
+        "rsquared_adj": -0.0029104247067870403,
+        "aic": 1962.0893140465705,
+        "bic": 1977.3458361738708
+    },
+    {
+        "variables": [
+            "feed_iv",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.013024363052109189,
+        "rsquared_adj": 0.004078964529922846,
+        "aic": 1959.7464902676738,
+        "bic": 1975.0030123949741
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_dobi"
+        ],
+        "rsquared": 0.12661723588037965,
+        "rsquared_adj": 0.11603077813347507,
+        "aic": 1920.7855549990086,
+        "bic": 1939.8562076581338
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12646442641419997,
+        "rsquared_adj": 0.11587611643134177,
+        "aic": 1920.8441623994759,
+        "bic": 1939.914815058601
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.1263734623150874,
+        "rsquared_adj": 0.11578404973708833,
+        "aic": 1920.8790452223502,
+        "bic": 1939.9496978814755
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_iv",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12656919984121762,
+        "rsquared_adj": 0.11598215983929294,
+        "aic": 1920.8039794874055,
+        "bic": 1939.8746321465308
+    },
+    {
+        "variables": [
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.013303759914666036,
+        "rsquared_adj": 0.0013438054893891715,
+        "aic": 1961.651643752738,
+        "bic": 1980.7222964118632
+    },
+    {
+        "variables": [
+            "feed_ffa_pct",
+            "feed_mi_pct",
+            "feed_iv",
+            "feed_dobi",
+            "feed_car_pv"
+        ],
+        "rsquared": 0.12662692473124904,
+        "rsquared_adj": 0.11335377769069055,
+        "aic": 1922.7818386638826,
+        "bic": 1945.666621854833
+    }
+]

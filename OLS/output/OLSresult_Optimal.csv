@@ -1,0 +1,23 @@
+Best Independent Variables Selected: feed_ffa_pct
+Highest Adjusted R-squared: 0.1234
+
+                      OLS Regression Results                     
+Dep. Variable:   ,feed_p_ppm      ,  R-squared:         ,   0.126
+Model:           ,OLS             ,  Adj. R-squared:    ,   0.123
+Method:          ,Least Squares   ,  F-statistic:       ,   48.01
+Date:            ,Wed, 11 Mar 2026,  Prob (F-statistic):,2.20e-11
+Time:            ,21:48:04        ,  Log-Likelihood:    , -955.51
+No. Observations:,   335          ,  AIC:               ,   1915.
+Df Residuals:    ,   333          ,  BIC:               ,   1923.
+Df Model:        ,     1          ,                     ,        
+Covariance Type: ,nonrobust       ,                     ,        
+            ,   coef   , std err ,    t    ,P>|t| ,  [0.025 ,  0.975] 
+const       ,   11.3365,    2.461,    4.606, 0.000,    6.495,   16.178
+feed_ffa_pct,    3.8729,    0.559,    6.929, 0.000,    2.773,    4.972
+Omnibus:      , 5.010,  Durbin-Watson:     ,   0.609
+Prob(Omnibus):, 0.082,  Jarque-Bera (JB):  ,   5.028
+Skew:         , 0.299,  Prob(JB):          ,  0.0810
+Kurtosis:     , 2.955,  Cond. No.          ,    49.6
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
