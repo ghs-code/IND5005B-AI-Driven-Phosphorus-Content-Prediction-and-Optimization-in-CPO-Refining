@@ -19,7 +19,7 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
-TARGET_COL = "rbd_p_ppm"
+TARGET_COL = "feed_p_ppm"
 
 SELECTED_FEATURES = [
     "feed_ffa_pct",
@@ -163,8 +163,8 @@ def run_pipeline(input_path, output_dir):
         margin = (hi - lo) * 0.05
         ax.plot([lo - margin, hi + margin], [lo - margin, hi + margin],
                 "r--", linewidth=1, label="Perfect prediction")
-        ax.set_xlabel("Actual rbd_p_ppm")
-        ax.set_ylabel("Predicted rbd_p_ppm")
+        ax.set_xlabel("Actual feed_p_ppm")
+        ax.set_ylabel("Predicted feed_p_ppm")
         ax.set_title(f"Actual vs Predicted — 5 Variables ({name})")
         ax.legend()
         fig.tight_layout()
@@ -180,7 +180,7 @@ def run_pipeline(input_path, output_dir):
         fig, ax = plt.subplots(figsize=(7, 5))
         ax.scatter(y_pred, residuals, alpha=0.6, edgecolors="k", linewidths=0.5, s=30)
         ax.axhline(y=0, color="r", linestyle="--", linewidth=1)
-        ax.set_xlabel("Predicted rbd_p_ppm")
+        ax.set_xlabel("Predicted feed_p_ppm")
         ax.set_ylabel("Residual")
         ax.set_title(f"Residuals — 5 Variables ({name})")
         fig.tight_layout()

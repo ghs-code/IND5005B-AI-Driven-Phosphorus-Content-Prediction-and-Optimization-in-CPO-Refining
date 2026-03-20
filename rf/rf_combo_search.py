@@ -23,7 +23,7 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
-TARGET_COL = "rbd_p_ppm"
+TARGET_COL = "feed_p_ppm"
 CV_FOLDS = 5
 CV_SCORING = "neg_mean_squared_error"
 
@@ -39,7 +39,6 @@ INDEPENDENT_VARS = ["feed_dobi", "feed_iv", "feed_car_pv", "feed_mi_pct"]
 # Mutually exclusive pairs: pick one or neither from each pair
 EXCLUSIVE_PAIRS = [
     ("feed_ffa_pct", "log_feed_ffa_pct"),
-    ("feed_p_ppm", "log_feed_p_ppm"),
 ]
 
 OUTPUT_PREFIX = "rf_combo_search"

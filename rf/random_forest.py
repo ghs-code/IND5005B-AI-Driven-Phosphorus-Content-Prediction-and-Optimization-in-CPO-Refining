@@ -23,8 +23,15 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
-TARGET_COL = "rbd_p_ppm"
-DROP_COLS = ["date"]
+TARGET_COL = "feed_p_ppm"
+DROP_COLS = [
+    "date",
+    "rbd_p_ppm",                    # downstream measurement (refined product)
+    "acid_dosing_pct",              # process variable (downstream decision)
+    "bleaching_earth_dosing_pct",   # process variable (downstream decision)
+    "log_feed_p_ppm",               # log of target variable
+    "log_feed_ffa_pct",             # duplicate of feed_ffa_pct (avoid splitting importance)
+]
 
 PARAM_GRID = {
     "n_estimators": [100, 200, 300, 500],
@@ -146,8 +153,8 @@ def plot_actual_vs_predicted(y_true, y_pred, dataset_name, output_path):
     ax.plot([lo - margin, hi + margin], [lo - margin, hi + margin],
             "r--", linewidth=1, label="Perfect prediction")
 
-    ax.set_xlabel("Actual rbd_p_ppm")
-    ax.set_ylabel("Predicted rbd_p_ppm")
+    ax.set_xlabel("Actual feed_p_ppm")
+    ax.set_ylabel("Predicted feed_p_ppm")
     ax.set_title(f"Actual vs Predicted ({dataset_name})")
     ax.legend()
     fig.tight_layout()
@@ -161,7 +168,7 @@ def plot_residuals(y_true, y_pred, dataset_name, output_path):
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.scatter(y_pred, residuals, alpha=0.6, edgecolors="k", linewidths=0.5, s=30)
     ax.axhline(y=0, color="r", linestyle="--", linewidth=1)
-    ax.set_xlabel("Predicted rbd_p_ppm")
+    ax.set_xlabel("Predicted feed_p_ppm")
     ax.set_ylabel("Residual")
     ax.set_title(f"Residuals ({dataset_name})")
     fig.tight_layout()
