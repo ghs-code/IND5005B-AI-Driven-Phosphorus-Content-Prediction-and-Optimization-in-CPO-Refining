@@ -21,7 +21,11 @@ IND5005B-AI-Driven-Phosphorus-Content-Prediction-and-Optimization-in-CPO-Refinin
 │       └── README.md
 ├── local_data/
 │   ├── raw/                     # gitignored，本地保密原始输入
-│   └── processed/               # gitignored，本地保密中间数据
+│   └── processed/               # gitignored，旧版固定输出目录
+├── local_runs/
+│   └── YYYYmmdd_HHMMSS/         # gitignored，默认每次运行的独立输出目录
+│       ├── processed/
+│       └── reports/
 ├── reports/
 │   ├── README.md
 │   ├── preprocessing/
@@ -69,8 +73,10 @@ IND5005B-AI-Driven-Phosphorus-Content-Prediction-and-Optimization-in-CPO-Refinin
 - `src/`：核心源码。
 - `scripts/`：运行入口。
 - `local_data/raw/`：本地保密原始输入。
-- `local_data/processed/`：本地保密中间数据。
-- `local_reports/`：本地保密分析报告与模型产物。
+- `local_runs/<run_id>/processed/`：默认每次运行生成的本地保密中间数据。
+- `local_runs/<run_id>/reports/`：默认每次运行生成的本地保密分析报告与模型产物。
+- `local_data/processed/`：旧版固定中间数据目录，仅在关闭归档模式时使用。
+- `local_reports/`：旧版固定报告目录，仅在关闭归档模式时使用。
 - `data/raw/`：仓库内原始数据占位说明，不存放真实文件。
 - `data/processed/`：仓库内中间数据占位说明，不存放真实文件。
 - `reports/`：仓库内报告目录占位说明，不存放真实文件。
@@ -101,9 +107,12 @@ cp .env.example .env
 - `PYTHON`：执行 Python 命令时使用的解释器，默认 `python3`
 - `CPO_RAW_INPUT`：本地保密原始文件路径，也可以设置为包含多年份 Excel 的目录
 - `CPO_YEAR`：按数据日期选择年份，默认 `all`；可设为 `2024`、`2025` 或 `2024,2025`
-- `CPO_PROCESSED_DIR`：本地保密中间数据目录
-- `CPO_MODEL_SOURCE`：随机森林模型使用的原始特征源文件，默认 `local_data/processed/model_source.csv`
-- `CPO_MODEL_READY`：OLS 和历史报告流程使用的全量预处理建模文件，默认 `local_data/processed/model_ready.csv`
+- `CPO_ARCHIVE_RUNS`：是否启用每次运行独立归档目录，默认 `1`
+- `CPO_RUN_ID`：运行编号，默认按当前时间生成到微秒，如 `20260501_143000_123456`
+- `CPO_RUN_ROOT`：当前运行的根目录，默认 `local_runs/<CPO_RUN_ID>`
+- `CPO_PROCESSED_DIR`：本地保密中间数据目录；归档模式下自动解析为 `local_runs/<CPO_RUN_ID>/processed`
+- `CPO_MODEL_SOURCE`：随机森林模型使用的原始特征源文件；归档模式下自动解析为当前 run 的 `processed/model_source.csv`
+- `CPO_MODEL_READY`：OLS 和历史报告流程使用的全量预处理建模文件；归档模式下自动解析为当前 run 的 `processed/model_ready.csv`
 - `CPO_PREPROCESSING_REPORT_DIR`：预处理报告目录
 - `CPO_OLS_REPORT_DIR`：OLS 报告目录
 - `CPO_RF_FULL_REPORT_DIR`：全量特征随机森林报告目录
@@ -129,10 +138,10 @@ local_data/raw/R3 QUALITY 2024.xlsx
 local_data/raw/Copy of R3 QUALITY 2025.xlsx
 ```
 
-预处理后的中间数据默认输出到：
+预处理后的中间数据默认输出到每次运行独立目录：
 
 ```text
-local_data/processed/
+local_runs/<run_id>/processed/
 ```
 
 其中 `model_source.csv` 只包含标准化后的原始字段，不做全量补值、IQR 裁剪、one-hot 或 log 特征；随机森林脚本会在 sklearn Pipeline 内对训练折拟合这些预处理步骤，避免验证/测试数据泄漏。`model_ready.csv` 保留给 OLS 和 EDA 报告使用。
@@ -140,10 +149,10 @@ local_data/processed/
 分析报告与模型结果默认输出到：
 
 ```text
-local_reports/
+local_runs/<run_id>/reports/
 ```
 
-如有需要，也可以在运行命令中通过参数覆盖这些默认路径。
+这样重复运行 `make all` 不会覆盖旧结果。如需恢复旧版固定输出目录，可运行 `make all CPO_ARCHIVE_RUNS=0`，此时会使用 `.env` 中的 `local_data/processed/` 和 `local_reports/` 等路径，并覆盖同名文件。
 
 ## Make 工作流
 
@@ -153,6 +162,12 @@ local_reports/
 
 ```bash
 make help
+```
+
+查看本次运行将使用的输入和输出目录：
+
+```bash
+make print-config
 ```
 
 初始化本地配置：
@@ -177,6 +192,14 @@ make install
 
 ```bash
 make all
+```
+
+默认会生成一个新的运行目录，例如：
+
+```text
+local_runs/20260501_143000_123456/
+├── processed/
+└── reports/
 ```
 
 选择某一年或合并所有年份：
@@ -209,6 +232,13 @@ make acf
 make rf-full
 make rf-core
 make rf-combo
+```
+
+如果需要分步执行同一次实验，请手动固定 `CPO_RUN_ID`，保证各步骤读写同一目录：
+
+```bash
+make preprocess CPO_RUN_ID=experiment_01
+make models CPO_RUN_ID=experiment_01
 ```
 
 ## 运行方式
@@ -250,14 +280,14 @@ python3 scripts/run_rf_combo_search.py
 
 预处理：
 
-- `local_data/processed/processed_full.csv`
-- `local_data/processed/model_ready.csv`
-- `local_data/processed/model_ready_lag.csv`
-- `local_reports/preprocessing/`
+- `local_runs/<run_id>/processed/processed_full.csv`
+- `local_runs/<run_id>/processed/model_ready.csv`
+- `local_runs/<run_id>/processed/model_ready_lag.csv`
+- `local_runs/<run_id>/reports/preprocessing/`
 
 OLS：
 
-- `local_reports/ols/`
+- `local_runs/<run_id>/reports/ols/`
 
 随机森林：
 
