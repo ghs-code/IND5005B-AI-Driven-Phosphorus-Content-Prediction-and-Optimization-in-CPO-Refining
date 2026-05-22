@@ -45,25 +45,32 @@ IND5005B-AI-Driven-Phosphorus-Content-Prediction-and-Optimization-in-CPO-Refinin
 ├── local_reports/
 │   ├── preprocessing/           # gitignored，本地保密报告
 │   ├── ols/                     # gitignored，本地保密报告
-│   └── random_forest/           # gitignored，本地保密报告
+│   ├── random_forest/           # gitignored，本地保密报告
+│   └── cross_year_comparison/   # gitignored，本地保密跨年对比 EDA 报告
 ├── scripts/
 │   ├── run_preprocessing.py
+│   ├── run_preprocessing_multi.py
 │   ├── run_ols.py
+│   ├── run_models_multi.py
 │   ├── run_acf_plot.py
 │   ├── run_rf_full.py
 │   ├── run_rf_core.py
-│   └── run_rf_combo_search.py
+│   ├── run_rf_combo_search.py
+│   └── run_final_eda.py
 ├── src/
 │   └── cpo_phosphorus/
 │       ├── paths.py
 │       ├── pipelines/
-│       │   └── data_processing.py
+│       │   ├── data_processing.py
+│       │   ├── multi_year_dispatcher.py
+│       │   └── final_eda.py
 │       └── models/
 │           ├── acf_plot.py
 │           ├── ols.py
 │           ├── random_forest_core.py
 │           ├── random_forest_full.py
-│           └── rf_combo_search.py
+│           ├── rf_combo_search.py
+│           └── multi_model_dispatcher.py
 ├── pyproject.toml
 └── README.md
 ```
@@ -283,6 +290,26 @@ python3 scripts/run_rf_core.py
 python3 scripts/run_rf_combo_search.py
 ```
 
+## 多年份跨年对比运行方式 (Final EDA)
+
+当输入目录包含多年数据（例如 2024 和 2025 年）时，推荐使用新增的多组别调度框架，以生成终期报告所需的对比分析：
+
+1. **多年数据预处理**（将自动生成按年份拆分及 overall 的数据目录）：
+```bash
+python3 scripts/run_preprocessing_multi.py
+```
+
+2. **多组别模型批量运行**（遍历所有组别并自动调用 OLS、ACF、RF）：
+```bash
+python3 scripts/run_models_multi.py
+```
+*(注意：RF 全局验证耗时较长，可通过 `--skip-rf` 等参数跳过部分流程)*
+
+3. **跨年对比 EDA 分析**（生成终期报告第二章所需的各类对比图表与表格）：
+```bash
+python3 scripts/run_final_eda.py
+```
+
 ## 默认本地输出
 
 预处理：
@@ -301,6 +328,12 @@ OLS：
 - `local_reports/random_forest/full_feature/`
 - `local_reports/random_forest/core_feature/`
 - `local_reports/random_forest/combo_search/`
+
+跨年对比 EDA (Final EDA)：
+
+- `local_reports/cross_year_comparison/2.1_Dataset_Overview/`
+- `local_reports/cross_year_comparison/2.2_Distribution_Trend/`
+- `local_reports/cross_year_comparison/2.3_Relationship_Analysis/`
 
 优化后的 feed oil 预测与风险预警：
 
