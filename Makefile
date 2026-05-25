@@ -15,11 +15,14 @@ CPO_MODEL_READY ?= $(CPO_PROCESSED_DIR)/model_ready.csv
 CPO_REPORTS_DIR ?= local_reports
 CPO_PREPROCESSING_REPORT_DIR ?= local_reports/preprocessing
 CPO_OLS_REPORT_DIR ?= local_reports/ols
+CPO_ACF_REPORT_DIR ?= $(CPO_OLS_REPORT_DIR)
 CPO_RF_REPORTS_DIR ?= local_reports/random_forest
 CPO_RF_FULL_REPORT_DIR ?= local_reports/random_forest/full_feature
 CPO_RF_CORE_REPORT_DIR ?= local_reports/random_forest/core_feature
 CPO_RF_COMBO_REPORT_DIR ?= local_reports/random_forest/combo_search
 CPO_FEED_OPT_REPORT_DIR ?= local_reports/feed_model_optimized
+CPO_CROSS_YEAR_REPORT_DIR ?= $(CPO_REPORTS_DIR)/cross_year_comparison
+CPO_MULTI_MODEL_FLAGS ?=
 CPO_YEARLY_RUN_PREFIX ?= optimized_feed
 CPO_TARGET_COL ?= feed_p_ppm
 CPO_VIF_THRESHOLD ?= 10
@@ -37,14 +40,16 @@ CPO_MODEL_READY := $(CPO_PROCESSED_DIR)/model_ready.csv
 CPO_REPORTS_DIR := $(CPO_RUN_ROOT)/reports
 CPO_PREPROCESSING_REPORT_DIR := $(CPO_REPORTS_DIR)/preprocessing
 CPO_OLS_REPORT_DIR := $(CPO_REPORTS_DIR)/ols
+CPO_ACF_REPORT_DIR := $(CPO_OLS_REPORT_DIR)
 CPO_RF_REPORTS_DIR := $(CPO_REPORTS_DIR)/random_forest
 CPO_RF_FULL_REPORT_DIR := $(CPO_RF_REPORTS_DIR)/full_feature
 CPO_RF_CORE_REPORT_DIR := $(CPO_RF_REPORTS_DIR)/core_feature
 CPO_RF_COMBO_REPORT_DIR := $(CPO_RF_REPORTS_DIR)/combo_search
 CPO_FEED_OPT_REPORT_DIR := $(CPO_REPORTS_DIR)/feed_model_optimized
+CPO_CROSS_YEAR_REPORT_DIR := $(CPO_REPORTS_DIR)/cross_year_comparison
 endif
 
-.PHONY: help init-config mkdirs install preprocess ols acf rf-full rf-core rf-combo feed-opt feed-opt-yearly final-feed models all
+.PHONY: help init-config mkdirs install preprocess preprocess-multi ols acf rf-full rf-core rf-combo feed-opt feed-opt-yearly final-feed models models-multi final-eda cross-year all
 
 help:
 	@echo "Available targets:"
@@ -53,6 +58,7 @@ help:
 	@echo "  make mkdirs        # create local confidential directories"
 	@echo "  make install       # install project dependencies"
 	@echo "  make preprocess    # run preprocessing pipeline"
+	@echo "  make preprocess-multi # run per-year + overall preprocessing"
 	@echo "  make ols           # run OLS pipeline"
 	@echo "  make acf           # generate ACF plot"
 	@echo "  make rf-full       # run full-feature random forest"
@@ -62,7 +68,10 @@ help:
 	@echo "  make feed-opt-yearly # run optimized feed model separately for 2024 and 2025"
 	@echo "  make final-feed    # run fixed final 2024-2025 feed-oil experiment"
 	@echo "  make models        # run OLS + ACF + all RF workflows"
-	@echo "  make all           # run preprocessing and all model workflows"
+	@echo "  make models-multi  # run OLS + ACF + RF full for each year/overall group"
+	@echo "  make final-eda     # generate cross-year final-report EDA outputs"
+	@echo "  make cross-year    # run multi-year preprocessing, grouped models, and final EDA"
+	@echo "  make all           # run full single-run and cross-year workflows"
 	@echo ""
 	@echo "Run archive mode:"
 	@echo "  CPO_ARCHIVE_RUNS=1 writes each run to local_runs/<timestamp>/ (default)"
@@ -84,17 +93,22 @@ print-config:
 	@echo "CPO_MODEL_READY=$(CPO_MODEL_READY)"
 	@echo "CPO_PREPROCESSING_REPORT_DIR=$(CPO_PREPROCESSING_REPORT_DIR)"
 	@echo "CPO_OLS_REPORT_DIR=$(CPO_OLS_REPORT_DIR)"
+	@echo "CPO_ACF_REPORT_DIR=$(CPO_ACF_REPORT_DIR)"
 	@echo "CPO_RF_FULL_REPORT_DIR=$(CPO_RF_FULL_REPORT_DIR)"
 	@echo "CPO_RF_CORE_REPORT_DIR=$(CPO_RF_CORE_REPORT_DIR)"
 	@echo "CPO_RF_COMBO_REPORT_DIR=$(CPO_RF_COMBO_REPORT_DIR)"
 	@echo "CPO_FEED_OPT_REPORT_DIR=$(CPO_FEED_OPT_REPORT_DIR)"
+	@echo "CPO_CROSS_YEAR_REPORT_DIR=$(CPO_CROSS_YEAR_REPORT_DIR)"
+	@echo "CPO_MULTI_MODEL_FLAGS=$(CPO_MULTI_MODEL_FLAGS)"
 	@echo "CPO_YEARLY_RUN_PREFIX=$(CPO_YEARLY_RUN_PREFIX)"
 
 mkdirs:
 	@mkdir -p "$(CPO_LOCAL_RAW_DIR)" "$(CPO_PROCESSED_DIR)" \
 		"$(CPO_PREPROCESSING_REPORT_DIR)" "$(CPO_OLS_REPORT_DIR)" \
+		"$(CPO_ACF_REPORT_DIR)" \
 		"$(CPO_RF_FULL_REPORT_DIR)" "$(CPO_RF_CORE_REPORT_DIR)" \
-		"$(CPO_RF_COMBO_REPORT_DIR)" "$(CPO_FEED_OPT_REPORT_DIR)"
+		"$(CPO_RF_COMBO_REPORT_DIR)" "$(CPO_FEED_OPT_REPORT_DIR)" \
+		"$(CPO_CROSS_YEAR_REPORT_DIR)"
 
 install:
 	$(PIP) install -U pip
@@ -102,6 +116,15 @@ install:
 
 preprocess: mkdirs
 	$(PYTHON) scripts/run_preprocessing.py \
+		--input "$(CPO_RAW_INPUT)" \
+		--year "$(CPO_YEAR)" \
+		--processed-dir "$(CPO_PROCESSED_DIR)" \
+		--report-dir "$(CPO_PREPROCESSING_REPORT_DIR)" \
+		--target-col "$(CPO_TARGET_COL)" \
+		--vif-threshold "$(CPO_VIF_THRESHOLD)"
+
+preprocess-multi: mkdirs
+	$(PYTHON) scripts/run_preprocessing_multi.py \
 		--input "$(CPO_RAW_INPUT)" \
 		--year "$(CPO_YEAR)" \
 		--processed-dir "$(CPO_PROCESSED_DIR)" \
@@ -146,6 +169,20 @@ feed-opt: mkdirs
 		--output-dir "$(CPO_FEED_OPT_REPORT_DIR)" \
 		--target-col "$(CPO_TARGET_COL)"
 
+models-multi: mkdirs
+	$(PYTHON) scripts/run_models_multi.py \
+		--processed-dir "$(CPO_PROCESSED_DIR)" \
+		--ols-report-dir "$(CPO_OLS_REPORT_DIR)" \
+		--acf-report-dir "$(CPO_ACF_REPORT_DIR)" \
+		--rf-report-dir "$(CPO_RF_FULL_REPORT_DIR)" \
+		--target-col "$(CPO_TARGET_COL)" $(CPO_MULTI_MODEL_FLAGS)
+
+final-eda: mkdirs
+	$(PYTHON) scripts/run_final_eda.py \
+		--processed-dir "$(CPO_PROCESSED_DIR)" \
+		--report-dir "$(CPO_PREPROCESSING_REPORT_DIR)" \
+		--cross-year-dir "$(CPO_CROSS_YEAR_REPORT_DIR)"
+
 feed-opt-yearly:
 	$(MAKE) preprocess feed-opt \
 		CPO_RUN_ID="$(CPO_YEARLY_RUN_PREFIX)_2024" \
@@ -166,4 +203,6 @@ final-feed:
 
 models: ols acf rf-full rf-core rf-combo feed-opt
 
-all: preprocess models
+cross-year: preprocess-multi models-multi final-eda
+
+all: preprocess models cross-year

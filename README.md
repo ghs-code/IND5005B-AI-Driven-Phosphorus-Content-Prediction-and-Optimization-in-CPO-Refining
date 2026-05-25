@@ -195,11 +195,13 @@ make mkdirs
 make install
 ```
 
-运行完整流程：
+运行最终完整流程：
 
 ```bash
-make all
+make all CPO_RAW_INPUT=local_data/raw CPO_YEAR=all
 ```
+
+`make all` 会依次执行常规单套预处理与建模、跨年分组预处理与建模、终期跨年 EDA。若只使用默认单个 Excel 输入，跨年 EDA 会在检测到不足两个年份时自动跳过；终期报告建议将 `CPO_RAW_INPUT` 指向包含多年 Excel 的目录。
 
 默认会生成一个新的运行目录，例如：
 
@@ -216,6 +218,8 @@ make all CPO_RAW_INPUT=local_data/raw CPO_YEAR=2024
 make all CPO_RAW_INPUT=local_data/raw CPO_YEAR=2025
 make all CPO_RAW_INPUT=local_data/raw CPO_YEAR=all
 ```
+
+其中 `CPO_YEAR=all` 是最终完整跨年报告的推荐口径；只指定单一年份时，常规模型仍会运行，跨年 EDA 会跳过。
 
 只运行建模部分：
 
@@ -234,12 +238,27 @@ make models CPO_TARGET_COL=feed_p_ppm
 
 ```bash
 make preprocess
+make preprocess-multi
 make ols
 make acf
 make rf-full
 make rf-core
 make rf-combo
 make feed-opt
+make models-multi
+make final-eda
+```
+
+运行终期报告跨年分析工作流：
+
+```bash
+make cross-year CPO_RAW_INPUT=local_data/raw
+```
+
+该流程会依次执行多年数据预处理、多组别模型运行和跨年 EDA。默认仍使用归档模式，输出到同一个 `local_runs/<run_id>/` 下。若 RF 全局验证耗时过长，可临时跳过：
+
+```bash
+make cross-year CPO_RAW_INPUT=local_data/raw CPO_MULTI_MODEL_FLAGS=--skip-rf
 ```
 
 运行最终固定口径实验，输出到 `local_runs/final_feed_2024_2025/`：
@@ -253,6 +272,9 @@ make final-feed
 ```bash
 make preprocess CPO_RUN_ID=experiment_01
 make models CPO_RUN_ID=experiment_01
+make preprocess-multi CPO_RUN_ID=cross_year_01 CPO_RAW_INPUT=local_data/raw
+make models-multi CPO_RUN_ID=cross_year_01
+make final-eda CPO_RUN_ID=cross_year_01
 ```
 
 ## 运行方式
@@ -292,23 +314,31 @@ python3 scripts/run_rf_combo_search.py
 
 ## 多年份跨年对比运行方式 (Final EDA)
 
-当输入目录包含多年数据（例如 2024 和 2025 年）时，推荐使用新增的多组别调度框架，以生成终期报告所需的对比分析：
+当输入目录包含多年数据（例如 2024 和 2025 年）时，推荐直接使用 Makefile 统一入口：
+
+```bash
+make cross-year CPO_RAW_INPUT=local_data/raw
+```
+
+也可以按三个阶段分步执行：
 
 1. **多年数据预处理**（将自动生成按年份拆分及 overall 的数据目录）：
 ```bash
-python3 scripts/run_preprocessing_multi.py
+make preprocess-multi CPO_RAW_INPUT=local_data/raw
 ```
 
 2. **多组别模型批量运行**（遍历所有组别并自动调用 OLS、ACF、RF）：
 ```bash
-python3 scripts/run_models_multi.py
+make models-multi
 ```
-*(注意：RF 全局验证耗时较长，可通过 `--skip-rf` 等参数跳过部分流程)*
+*(注意：RF 全局验证耗时较长，可通过 `CPO_MULTI_MODEL_FLAGS=--skip-rf` 跳过 RF full 流程。)*
 
 3. **跨年对比 EDA 分析**（生成终期报告第二章所需的各类对比图表与表格）：
 ```bash
-python3 scripts/run_final_eda.py
+make final-eda
 ```
+
+三个目标仍然调用 `scripts/` 下的薄入口脚本；如需调试底层参数，也可以直接运行对应 Python 脚本。
 
 ## 默认本地输出
 
