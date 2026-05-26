@@ -13,6 +13,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.cache/
 
 # Local configuration
 .env
@@ -22,3 +23,8 @@ env/
 local_data/
 local_reports/
 local_runs/
+
+# Reference files
+reference/
+plan.md
+SUMMARY.md

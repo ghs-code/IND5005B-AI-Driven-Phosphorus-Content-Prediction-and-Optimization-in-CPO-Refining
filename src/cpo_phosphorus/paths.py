@@ -43,6 +43,10 @@ LOCAL_RF_COMBO_REPORTS_DIR = _env_path(
     "CPO_RF_COMBO_REPORT_DIR",
     LOCAL_RANDOM_FOREST_REPORTS_DIR / "combo_search",
 )
+LOCAL_FACTOR_VALIDATION_REPORTS_DIR = _env_path(
+    "CPO_FACTOR_REPORT_DIR",
+    LOCAL_REPORTS_DIR / "factor_validation",
+)
 
 DEFAULT_RAW_EXCEL = _env_path(
     "CPO_RAW_INPUT",
