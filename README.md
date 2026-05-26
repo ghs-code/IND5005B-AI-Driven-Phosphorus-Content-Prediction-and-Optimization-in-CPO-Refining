@@ -125,6 +125,9 @@ cp .env.example .env
 - `CPO_RF_FULL_REPORT_DIR`：全量特征随机森林报告目录
 - `CPO_RF_CORE_REPORT_DIR`：核心变量随机森林报告目录
 - `CPO_RF_COMBO_REPORT_DIR`：变量组合搜索报告目录
+- `CPO_FEED_OPT_REPORT_DIR`：最终 feed oil phosphorus 模型比较报告目录
+- `CPO_FACTOR_INPUT`：可选的潜在影响因素 sidecar 数据，支持 CSV/XLSX；为空时只验证当前数据中的 proxy 与缺失项
+- `CPO_FACTOR_REPORT_DIR`：潜在影响因素验证报告目录
 - `CPO_TARGET_COL`：当前预测目标列，默认 `feed_p_ppm`；如需预测 `rbd_p_ppm`，可在 `.env` 中切换或运行 `make all CPO_TARGET_COL=rbd_p_ppm`
 - `CPO_VIF_THRESHOLD`：VIF 严重共线性阈值
 
@@ -245,9 +248,31 @@ make rf-full
 make rf-core
 make rf-combo
 make feed-opt
+make factor-validation
+make factor-validation-smoke
 make models-multi
 make final-eda
 ```
+
+## 潜在影响因素验证
+
+`make factor-validation` 会读取 `CPO_MODEL_SOURCE`，并可选择合并 `CPO_FACTOR_INPUT` 指向的 sidecar 表。sidecar join 优先级为 `batch_id`、`date + feed_tank`、`date`；如果 sidecar key 重复并可能导致 one-to-many / many-to-many 扩张，流程会直接报错而不是静默合并。
+
+可用模板见：
+
+```text
+data/raw/factor_sidecar_template.csv
+```
+
+输出默认写入：
+
+```text
+local_runs/<run_id>/reports/factor_validation/
+```
+
+其中包括 `factor_availability.csv`、`factor_join_diagnostics.csv`、`factor_univariate_tests.csv`、`factor_group_model_comparison.csv`、`factor_permutation_importance.csv`、`factor_evidence_matrix.csv` 和 `factor_recommendations.md`。feed phosphorus 模型只使用预测时可得的 pre-feed 字段；`rbd_*`、acid/bleaching dosing、lab turnaround 和 `p_removal_delta` 只用于 process-response 讨论，不进入 feed target 预测特征。
+
+`make factor-validation-smoke` 会用当前 `CPO_MODEL_SOURCE` 生成临时 synthetic sidecar，检查 `batch_id`、`date + feed_tank`、`date` 三种 join 路径、重复 key 拒绝、派生时间字段和 feed 模型特征边界。
 
 运行终期报告跨年分析工作流：
 
