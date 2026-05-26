@@ -24,8 +24,7 @@ local_data/
 local_reports/
 local_runs/
 
-# Reference data
+# Reference files
 reference/
-
-# Plans
 plan.md
+SUMMARY.md

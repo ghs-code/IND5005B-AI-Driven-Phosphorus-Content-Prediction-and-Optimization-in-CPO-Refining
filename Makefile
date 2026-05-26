@@ -21,7 +21,6 @@ CPO_RF_FULL_REPORT_DIR ?= local_reports/random_forest/full_feature
 CPO_RF_CORE_REPORT_DIR ?= local_reports/random_forest/core_feature
 CPO_RF_COMBO_REPORT_DIR ?= local_reports/random_forest/combo_search
 CPO_FEED_OPT_REPORT_DIR ?= local_reports/feed_model_optimized
-CPO_FACTOR_INPUT ?=
 CPO_FACTOR_REPORT_DIR ?= local_reports/factor_validation
 CPO_CROSS_YEAR_REPORT_DIR ?= $(CPO_REPORTS_DIR)/cross_year_comparison
 CPO_MULTI_MODEL_FLAGS ?=
@@ -52,7 +51,7 @@ CPO_FACTOR_REPORT_DIR := $(CPO_REPORTS_DIR)/factor_validation
 CPO_CROSS_YEAR_REPORT_DIR := $(CPO_REPORTS_DIR)/cross_year_comparison
 endif
 
-.PHONY: help init-config mkdirs install preprocess preprocess-multi ols acf rf-full rf-core rf-combo feed-opt factor-validation factor-validation-smoke feed-opt-yearly final-feed models models-multi final-eda cross-year all
+.PHONY: help init-config mkdirs install preprocess preprocess-multi ols acf rf-full rf-core rf-combo feed-opt factor-validation feed-opt-yearly final-feed models models-multi final-eda cross-year all
 
 help:
 	@echo "Available targets:"
@@ -68,8 +67,7 @@ help:
 	@echo "  make rf-core       # run core-feature random forest"
 	@echo "  make rf-combo      # run random forest combo search"
 	@echo "  make feed-opt      # run optimized feed-oil model comparison"
-	@echo "  make factor-validation # validate potential influencing factors and sidecar data"
-	@echo "  make factor-validation-smoke # check factor sidecar joins and leakage guardrails"
+	@echo "  make factor-validation # validate current-table proxy factors"
 	@echo "  make feed-opt-yearly # run optimized feed model separately for 2024 and 2025"
 	@echo "  make final-feed    # run fixed final 2024-2025 feed-oil experiment"
 	@echo "  make models        # run OLS + ACF + all RF workflows"
@@ -103,7 +101,6 @@ print-config:
 	@echo "CPO_RF_CORE_REPORT_DIR=$(CPO_RF_CORE_REPORT_DIR)"
 	@echo "CPO_RF_COMBO_REPORT_DIR=$(CPO_RF_COMBO_REPORT_DIR)"
 	@echo "CPO_FEED_OPT_REPORT_DIR=$(CPO_FEED_OPT_REPORT_DIR)"
-	@echo "CPO_FACTOR_INPUT=$(CPO_FACTOR_INPUT)"
 	@echo "CPO_FACTOR_REPORT_DIR=$(CPO_FACTOR_REPORT_DIR)"
 	@echo "CPO_CROSS_YEAR_REPORT_DIR=$(CPO_CROSS_YEAR_REPORT_DIR)"
 	@echo "CPO_MULTI_MODEL_FLAGS=$(CPO_MULTI_MODEL_FLAGS)"
@@ -181,12 +178,6 @@ factor-validation: mkdirs
 	$(PYTHON) scripts/run_factor_validation.py \
 		--input "$(CPO_MODEL_SOURCE)" \
 		--output-dir "$(CPO_FACTOR_REPORT_DIR)" \
-		--target-col "$(CPO_TARGET_COL)" \
-		$(if $(strip $(CPO_FACTOR_INPUT)),--factor-input "$(CPO_FACTOR_INPUT)",)
-
-factor-validation-smoke:
-	$(PYTHON) scripts/run_factor_validation_smoke.py \
-		--input "$(CPO_MODEL_SOURCE)" \
 		--target-col "$(CPO_TARGET_COL)"
 
 models-multi: mkdirs

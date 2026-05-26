@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Validate potential influencing factors for feed-oil phosphorus.
+"""Validate current-table proxy factors for feed-oil phosphorus.
 
-The existing project has enough data to test only a few proxy signals
-(`source_file`, `feed_tank`, calendar context, and recent phosphorus history).
-This module adds a conservative validation layer for the broader factor list
-from the final report plan.  Optional sponsor-provided sidecar data can be
-joined to `model_source.csv`; when it is absent, the pipeline still produces a
-clear evidence matrix showing which factors are proxy-only or missing.
+This current phase has only the 2024/2025 quality tables available.  The
+pipeline therefore tests observed proxy groups and process-response fields
+without trying to ingest enterprise/source/weather/soil/lab/process sidecars.
 """
 
 from __future__ import annotations
@@ -14,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +20,7 @@ from scipy import stats as scipy_stats
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -45,6 +41,8 @@ DEFAULT_TARGET_COL = "feed_p_ppm"
 DATE_COL = "date"
 RISK_QUANTILE = 0.80
 MIN_TEST_SAMPLES = 20
+MIN_RMSE_LIFT = 0.01
+OUT_OF_TIME_VALIDATIONS = ("blocked_time_holdout", "year_holdout", "monthly_rolling")
 
 QUALITY_FEATURES = [
     "feed_ffa_pct",
@@ -53,9 +51,15 @@ QUALITY_FEATURES = [
     "feed_dobi",
     "feed_car_pv",
 ]
-
+HISTORY_STATE_FEATURES = ["feed_p_ppm_lag1", "feed_p_ppm_roll3"]
+TIME_CONTEXT_FEATURES = ["time_trend"]
 BASE_PROXY_CATEGORICAL = ["source_file", "feed_tank", "feed_type"]
-HISTORY_FEATURES = ["time_trend", "feed_p_ppm_lag1", "feed_p_ppm_roll3"]
+PROCESS_RESPONSE_FEATURES = [
+    "acid_dosing_pct",
+    "bleaching_earth_dosing_pct",
+    "dosage_total_pct",
+    "acid_x_bleaching",
+]
 
 PREDICTION_EXCLUDED_PREFIXES = ("rbd_",)
 PREDICTION_EXCLUDED_COLUMNS = {
@@ -63,109 +67,8 @@ PREDICTION_EXCLUDED_COLUMNS = {
     "log_feed_p_ppm",
     "rbd_p_ppm",
     "p_removal_delta",
-    "acid_dosing_pct",
-    "bleaching_earth_dosing_pct",
-    "dosage_total_pct",
-    "acid_x_bleaching",
-    "lab_received_timestamp",
-    "lab_result_timestamp",
-    "sample_timestamp",
-    "sampling_timestamp",
-    "feed_sampling_timestamp",
-    "sampling_delay_hours",
-    "lab_turnaround_hours",
-    "lab_duplicate_id",
-    "lab_replicate_no",
-    "lab_p_replicate_ppm",
+    *PROCESS_RESPONSE_FEATURES,
 }
-
-NUMERIC_FACTOR_COLUMNS = {
-    "soil_ph",
-    "soil_p_mg_kg",
-    "soil_organic_matter_pct",
-    "fertilizer_p_rate",
-    "rainfall_mm",
-    "rainfall_7d",
-    "rainfall_30d",
-    "harvest_maturity",
-    "storage_hours",
-    "storage_temperature_c",
-    "ambient_temperature_c",
-    "tank_residence_hours",
-    "source_count_in_tank",
-    "mixed_batch_flag",
-    "batch_count",
-    "transport_batch_count",
-    "sampling_delay_hours",
-    "lab_turnaround_hours",
-    "acid_dosing_pct",
-    "bleaching_earth_dosing_pct",
-    "dosage_total_pct",
-    "acid_x_bleaching",
-    "fe_ppm",
-    "ca_ppm",
-    "mg_ppm",
-    "metal_ppm",
-    "phospholipid_ppm",
-}
-
-CATEGORICAL_FACTOR_COLUMNS = {
-    "batch_id",
-    "fruit_origin",
-    "mill_source",
-    "estate",
-    "supplier",
-    "harvest_condition",
-    "source_list",
-    "transport_batch_id",
-    "lorry_id",
-    "transport_mixing_flag",
-    "tank_mixing_event",
-    "lab_duplicate_id",
-    "lab_method",
-    "lab_operator",
-    "lab_instrument",
-    "process_regime",
-    "line_id",
-    "operation_mode",
-    "maintenance_flag",
-}
-
-SAFE_EXTENDED_NUMERIC = [
-    "soil_ph",
-    "soil_p_mg_kg",
-    "soil_organic_matter_pct",
-    "fertilizer_p_rate",
-    "rainfall_7d",
-    "rainfall_30d",
-    "storage_hours",
-    "storage_temperature_c",
-    "ambient_temperature_c",
-    "tank_residence_hours",
-    "source_count_in_tank",
-    "mixed_batch_flag",
-    "batch_count",
-    "transport_batch_count",
-    "fe_ppm",
-    "ca_ppm",
-    "mg_ppm",
-    "metal_ppm",
-    "phospholipid_ppm",
-]
-
-SAFE_EXTENDED_CATEGORICAL = [
-    "batch_id",
-    "fruit_origin",
-    "mill_source",
-    "estate",
-    "supplier",
-    "harvest_condition",
-    "source_list",
-    "transport_batch_id",
-    "lorry_id",
-    "transport_mixing_flag",
-    "tank_mixing_event",
-]
 
 REPORT_COLUMNS = {
     "availability": [
@@ -174,28 +77,13 @@ REPORT_COLUMNS = {
         "factor",
         "status",
         "prediction_safe_for_feed_model",
-        "direct_columns_found",
+        "current_table_columns_found",
         "proxy_columns_found",
-        "missing_direct_fields",
+        "missing_fields_or_context",
         "best_non_missing_rate",
         "max_unique_values",
         "verification_method",
         "recommendation",
-    ],
-    "join_diagnostics": [
-        "factor_input",
-        "status",
-        "join_key",
-        "merge_validation",
-        "base_rows",
-        "sidecar_rows",
-        "rows_after_merge",
-        "matched_rows",
-        "unmatched_rows",
-        "match_rate",
-        "base_duplicate_key_rows",
-        "sidecar_duplicate_key_rows",
-        "sidecar_columns",
     ],
     "univariate": [
         "factor_key",
@@ -208,8 +96,6 @@ REPORT_COLUMNS = {
         "statistic",
         "p_value",
         "effect_size",
-        "partial_spearman_rho",
-        "partial_spearman_p_value",
         "notes",
     ],
     "model_comparison": [
@@ -251,6 +137,28 @@ REPORT_COLUMNS = {
         "related_model_group",
         "next_action",
     ],
+    "proxy_impact": [
+        "proxy_cluster",
+        "feature_group",
+        "description",
+        "best_random_rmse",
+        "best_random_r2",
+        "best_out_of_time_rmse",
+        "best_out_of_time_r2",
+        "baseline_out_of_time_rmse",
+        "out_of_time_rmse_delta_vs_baseline",
+        "best_p80_recall",
+        "interpretation",
+    ],
+    "proxy_mapping": [
+        "proxy_cluster",
+        "proxy_features",
+        "possible_unobserved_factors",
+        "evidence_level",
+        "interpretation",
+        "allowed_wording",
+        "forbidden_wording",
+    ],
 }
 
 
@@ -259,7 +167,7 @@ class FactorSpec:
     key: str
     category: str
     name: str
-    direct_fields: tuple[str, ...]
+    current_fields: tuple[str, ...]
     proxy_fields: tuple[str, ...]
     prediction_safe: bool
     verification_method: str
@@ -278,7 +186,7 @@ class FactorFeatureGroup:
     def source_features(self) -> list[str]:
         features = {DATE_COL}
         for feature in self.numeric_features:
-            if feature in {"time_trend", "month"}:
+            if feature in {"month"}:
                 continue
             features.add(feature)
         features.update(self.categorical_features)
@@ -297,162 +205,113 @@ FACTOR_SPECS = [
         key="fruit_origin_mill_source",
         category="source_origin",
         name="fruit origin / mill source",
-        direct_fields=("batch_id", "fruit_origin", "mill_source", "estate", "supplier"),
+        current_fields=(),
         proxy_fields=("source_file", "feed_tank"),
         prediction_safe=True,
-        verification_method="categorical Kruskal/ANOVA proxy and model-group lift",
-        recommendation="Capture mill/source or batch origin at each feed-tank draw.",
+        verification_method="proxy categorical tests and tank/source model lift",
+        recommendation="Interpret only as tank/source proxy evidence; do not claim origin is identified.",
     ),
     FactorSpec(
         key="soil_fertility",
         category="source_origin",
         name="soil fertility",
-        direct_fields=(
-            "soil_ph",
-            "soil_p_mg_kg",
-            "soil_organic_matter_pct",
-            "fertilizer_p_rate",
-        ),
-        proxy_fields=("fruit_origin", "mill_source", "estate"),
+        current_fields=(),
+        proxy_fields=(),
         prediction_safe=True,
-        verification_method="Spearman and incremental extended-factor model lift",
-        recommendation="Collect estate-level soil/fertilizer attributes by origin.",
+        verification_method="not assessable with current tables",
+        recommendation="Leave as unconfirmed hypothesis under current data constraints.",
     ),
     FactorSpec(
         key="rain_harvest_conditions",
         category="weather_harvest",
         name="rainy season and harvest conditions",
-        direct_fields=(
-            "rainfall_mm",
-            "rainfall_7d",
-            "rainfall_30d",
-            "harvest_date",
-            "harvest_condition",
-            "harvest_maturity",
-        ),
-        proxy_fields=("month", "date"),
+        current_fields=(),
+        proxy_fields=("date", "month"),
         prediction_safe=True,
-        verification_method="monthly trend, Spearman, and out-of-time model lift",
-        recommendation="Add harvest/weather columns or date-level rainfall sidecar.",
+        verification_method="date/month proxy tests and time-context model comparison",
+        recommendation="Interpret only as time-context proxy evidence, not rainfall/harvest proof.",
     ),
     FactorSpec(
         key="storage_time_temperature",
         category="storage_transport_mixing",
         name="storage time and temperature",
-        direct_fields=(
-            "storage_start_ts",
-            "storage_end_ts",
-            "storage_hours",
-            "storage_temperature_c",
-            "ambient_temperature_c",
-        ),
+        current_fields=(),
         proxy_fields=("date", "feed_tank"),
         prediction_safe=True,
-        verification_method="Spearman and incremental extended-factor model lift",
-        recommendation="Record storage start/end timestamps and tank temperature.",
+        verification_method="date/tank proxy tests and model-group lift",
+        recommendation="Interpret only as proxy-supported hidden context.",
     ),
     FactorSpec(
         key="tank_mixing",
         category="storage_transport_mixing",
         name="tank mixing",
-        direct_fields=(
-            "tank_residence_hours",
-            "source_count_in_tank",
-            "mixed_batch_flag",
-            "source_list",
-            "tank_mixing_event",
-        ),
+        current_fields=(),
         proxy_fields=("feed_tank",),
         prediction_safe=True,
-        verification_method="categorical tests and history/tank proxy model lift",
-        recommendation="Track source count, tank residence time, and mixing events.",
+        verification_method="feed-tank proxy tests and model-group lift",
+        recommendation="Interpret only as feed-tank proxy evidence.",
     ),
     FactorSpec(
         key="transport_batch_mixing",
         category="storage_transport_mixing",
         name="transport / batch mixing",
-        direct_fields=(
-            "transport_batch_id",
-            "lorry_id",
-            "batch_count",
-            "transport_batch_count",
-            "transport_mixing_flag",
-        ),
+        current_fields=(),
         proxy_fields=("source_file", "feed_tank"),
         prediction_safe=True,
-        verification_method="categorical tests and extended-factor model lift",
-        recommendation="Add transport batch and lorry identifiers to the sidecar.",
+        verification_method="source/tank proxy tests and model-group lift",
+        recommendation="Interpret only as source/tank proxy evidence.",
     ),
     FactorSpec(
         key="lab_sampling_delay",
         category="lab_quality",
         name="lab sampling delay",
-        direct_fields=(
-            "sample_timestamp",
-            "sampling_timestamp",
-            "lab_received_timestamp",
-            "lab_result_timestamp",
-            "sampling_delay_hours",
-            "lab_turnaround_hours",
-        ),
+        current_fields=(),
         proxy_fields=(),
         prediction_safe=False,
-        verification_method="Spearman against target/residuals; not used in feed prediction",
-        recommendation="Capture sampling, lab receipt, and lab result timestamps.",
+        verification_method="not assessable with current tables",
+        recommendation="Leave as unconfirmed hypothesis under current data constraints.",
     ),
     FactorSpec(
         key="lab_measurement_error",
         category="lab_quality",
         name="lab measurement error",
-        direct_fields=(
-            "lab_duplicate_id",
-            "lab_replicate_no",
-            "lab_method",
-            "lab_operator",
-            "lab_instrument",
-            "lab_p_replicate_ppm",
-        ),
+        current_fields=(),
         proxy_fields=(),
         prediction_safe=False,
-        verification_method="replicate variance and same-condition variance",
-        recommendation="Collect duplicate/replicate measurements and lab metadata.",
+        verification_method="not assessable with current tables",
+        recommendation="Leave as unconfirmed hypothesis under current data constraints.",
     ),
     FactorSpec(
         key="process_regime_change",
         category="process_response",
         name="process regime change",
-        direct_fields=("process_regime", "line_id", "operation_mode", "maintenance_flag"),
+        current_fields=(),
         proxy_fields=("date",),
         prediction_safe=False,
-        verification_method="process-response tests against RBD P or P removal delta",
-        recommendation="Record process regime, line, and maintenance/changeover events.",
+        verification_method="date proxy is insufficient for process-regime validation",
+        recommendation="Keep as not assessable; date is not direct process-regime evidence.",
         process_response=True,
     ),
     FactorSpec(
         key="acid_bleaching_response",
         category="process_response",
         name="acid / bleaching earth dosage response",
-        direct_fields=(
-            "acid_dosing_pct",
-            "bleaching_earth_dosing_pct",
-            "dosage_total_pct",
-            "acid_x_bleaching",
-        ),
+        current_fields=tuple(PROCESS_RESPONSE_FEATURES),
         proxy_fields=(),
         prediction_safe=False,
         verification_method="process-response tests against RBD P or P removal delta",
-        recommendation="Treat dosing as downstream response evidence, not feed prediction input.",
+        recommendation="Discuss only as process-response evidence; exclude from feed P prediction.",
         process_response=True,
     ),
     FactorSpec(
         key="metal_phospholipid_complexes",
         category="chemistry_metals",
         name="metal-phospholipid complexes",
-        direct_fields=("fe_ppm", "ca_ppm", "mg_ppm", "metal_ppm", "phospholipid_ppm"),
+        current_fields=(),
         proxy_fields=(),
         prediction_safe=True,
-        verification_method="Spearman and incremental extended-factor model lift",
-        recommendation="Add metal/phospholipid assays when available before prediction.",
+        verification_method="not assessable with current tables",
+        recommendation="Leave as unconfirmed hypothesis under current data constraints.",
     ),
 ]
 
@@ -493,21 +352,6 @@ def _join_list(values) -> str:
     return "|".join(str(value) for value in values if value is not None)
 
 
-def _normalize_column_name(name: str) -> str:
-    text = str(name).strip().lower()
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", text)
-    text = re.sub(r"_+", "_", text).strip("_")
-    aliases = {
-        "sample_ts": "sample_timestamp",
-        "sampling_ts": "sampling_timestamp",
-        "lab_received_ts": "lab_received_timestamp",
-        "lab_result_ts": "lab_result_timestamp",
-        "storage_start_timestamp": "storage_start_ts",
-        "storage_end_timestamp": "storage_end_ts",
-    }
-    return aliases.get(text, text)
-
-
 def _normalize_key_text(series: pd.Series) -> pd.Series:
     return (
         series.where(series.notna(), np.nan)
@@ -519,27 +363,6 @@ def _normalize_key_text(series: pd.Series) -> pd.Series:
     )
 
 
-def _read_table(path: str | Path) -> pd.DataFrame:
-    input_path = Path(path).expanduser()
-    if not input_path.exists():
-        raise FileNotFoundError(f"Factor sidecar input does not exist: {input_path}")
-
-    if input_path.suffix.lower() in {".xlsx", ".xlsm", ".xls"}:
-        data = pd.read_excel(input_path)
-    elif input_path.suffix.lower() in {".csv", ".txt"}:
-        data = pd.read_csv(input_path)
-    else:
-        raise ValueError(f"Unsupported factor sidecar format: {input_path.suffix}")
-
-    data = data.rename(columns={col: _normalize_column_name(col) for col in data.columns})
-    if DATE_COL in data.columns:
-        data[DATE_COL] = pd.to_datetime(data[DATE_COL], errors="coerce")
-    for key_col in ["feed_tank", "batch_id"]:
-        if key_col in data.columns:
-            data[key_col] = _normalize_key_text(data[key_col])
-    return data
-
-
 def _load_model_source(input_path: str | Path, target_col: str) -> pd.DataFrame:
     data = pd.read_csv(input_path)
     if DATE_COL not in data.columns:
@@ -548,292 +371,41 @@ def _load_model_source(input_path: str | Path, target_col: str) -> pd.DataFrame:
         raise ValueError(f"Target column '{target_col}' not found in {input_path}")
 
     data[DATE_COL] = pd.to_datetime(data[DATE_COL], errors="coerce")
-    for key_col in ["feed_tank", "feed_type", "rbd_tank", "rbd_type"]:
+    for key_col in ["feed_tank", "feed_type", "source_file"]:
         if key_col in data.columns:
             data[key_col] = _normalize_key_text(data[key_col])
 
-    for col in [
-        *QUALITY_FEATURES,
+    numeric_cols = set(QUALITY_FEATURES) | {
         target_col,
         "rbd_p_ppm",
         "acid_dosing_pct",
         "bleaching_earth_dosing_pct",
-    ]:
+        "time_trend",
+        "missing_transition_phase",
+    }
+    for col in numeric_cols:
         if col in data.columns:
             data[col] = pd.to_numeric(data[col], errors="coerce")
 
-    data = data[data[DATE_COL].notna()].sort_values(DATE_COL).reset_index(drop=True)
-    return data
+    return data[data[DATE_COL].notna()].sort_values(DATE_COL).reset_index(drop=True)
 
 
-def _choose_join_key(base: pd.DataFrame, sidecar: pd.DataFrame) -> list[str]:
-    if "batch_id" in base.columns and "batch_id" in sidecar.columns:
-        if base["batch_id"].notna().any() and sidecar["batch_id"].notna().any():
-            return ["batch_id"]
-
-    if {DATE_COL, "feed_tank"}.issubset(base.columns) and {DATE_COL, "feed_tank"}.issubset(
-        sidecar.columns
-    ):
-        if sidecar[DATE_COL].notna().any() and sidecar["feed_tank"].notna().any():
-            return [DATE_COL, "feed_tank"]
-
-    if DATE_COL in base.columns and DATE_COL in sidecar.columns and sidecar[DATE_COL].notna().any():
-        return [DATE_COL]
-
-    return []
-
-
-def merge_factor_sidecar(
-    base: pd.DataFrame, factor_input: str | Path | None
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Left-join optional factor sidecar and return merge diagnostics."""
-
-    if not factor_input:
-        diagnostics = pd.DataFrame(
-            [
-                {
-                    "factor_input": "",
-                    "status": "no_sidecar",
-                    "join_key": "",
-                    "merge_validation": "",
-                    "base_rows": int(len(base)),
-                    "sidecar_rows": 0,
-                    "rows_after_merge": int(len(base)),
-                    "matched_rows": 0,
-                    "unmatched_rows": int(len(base)),
-                    "match_rate": 0.0,
-                    "base_duplicate_key_rows": 0,
-                    "sidecar_duplicate_key_rows": 0,
-                    "sidecar_columns": "",
-                }
-            ],
-            columns=REPORT_COLUMNS["join_diagnostics"],
-        )
-        return base.copy(), diagnostics
-
-    sidecar = _read_table(factor_input)
-    join_key = _choose_join_key(base, sidecar)
-    if not join_key:
-        diagnostics = pd.DataFrame(
-            [
-                {
-                    "factor_input": str(factor_input),
-                    "status": "no_usable_join_key",
-                    "join_key": "",
-                    "merge_validation": "",
-                    "base_rows": int(len(base)),
-                    "sidecar_rows": int(len(sidecar)),
-                    "rows_after_merge": int(len(base)),
-                    "matched_rows": 0,
-                    "unmatched_rows": int(len(base)),
-                    "match_rate": 0.0,
-                    "base_duplicate_key_rows": 0,
-                    "sidecar_duplicate_key_rows": 0,
-                    "sidecar_columns": _join_list(sidecar.columns),
-                }
-            ],
-            columns=REPORT_COLUMNS["join_diagnostics"],
-        )
-        return base.copy(), diagnostics
-
-    base_key = base[join_key]
-    sidecar_key = sidecar[join_key]
-    base_duplicate_rows = int(base_key.duplicated(keep=False).sum())
-    sidecar_duplicate_rows = int(sidecar_key.duplicated(keep=False).sum())
-    if sidecar_duplicate_rows:
-        raise ValueError(
-            "Factor sidecar has duplicate join keys, which could create a one-to-many "
-            f"or many-to-many merge. join_key={join_key}, duplicate_rows={sidecar_duplicate_rows}"
-        )
-
-    sidecar_payload = sidecar.copy()
-    rename_collisions = {
-        col: f"factor_{col}"
-        for col in sidecar_payload.columns
-        if col not in join_key and col in base.columns
-    }
-    if rename_collisions:
-        sidecar_payload = sidecar_payload.rename(columns=rename_collisions)
-
-    merge_validation = "many_to_one" if base_duplicate_rows else "one_to_one"
-    merged = base.merge(
-        sidecar_payload,
-        on=join_key,
-        how="left",
-        validate=merge_validation,
-        indicator=True,
-    )
-    matched_rows = int(merged["_merge"].eq("both").sum())
-    merged = merged.drop(columns=["_merge"])
-
-    diagnostics = pd.DataFrame(
-        [
-            {
-                "factor_input": str(factor_input),
-                "status": "merged",
-                "join_key": _join_list(join_key),
-                "merge_validation": merge_validation,
-                "base_rows": int(len(base)),
-                "sidecar_rows": int(len(sidecar)),
-                "rows_after_merge": int(len(merged)),
-                "matched_rows": matched_rows,
-                "unmatched_rows": int(len(merged) - matched_rows),
-                "match_rate": round(float(matched_rows / max(len(merged), 1)), 6),
-                "base_duplicate_key_rows": base_duplicate_rows,
-                "sidecar_duplicate_key_rows": sidecar_duplicate_rows,
-                "sidecar_columns": _join_list(sidecar.columns),
-            }
-        ],
-        columns=REPORT_COLUMNS["join_diagnostics"],
-    )
-    return merged, diagnostics
-
-
-def _parse_datetime_columns(data: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    for col in columns:
-        if col in data.columns:
-            data[col] = pd.to_datetime(data[col], errors="coerce")
-    return data
-
-
-def _derive_hours(data: pd.DataFrame, output_col: str, pairs: list[tuple[str, str]]) -> None:
-    if output_col in data.columns and pd.to_numeric(data[output_col], errors="coerce").notna().any():
-        data[output_col] = pd.to_numeric(data[output_col], errors="coerce")
-        return
-
-    for start_col, end_col in pairs:
-        if start_col not in data.columns or end_col not in data.columns:
-            continue
-        start = pd.to_datetime(data[start_col], errors="coerce")
-        end = pd.to_datetime(data[end_col], errors="coerce")
-        hours = (end - start).dt.total_seconds() / 3600.0
-        if hours.notna().any():
-            data[output_col] = hours.where(hours.ge(0))
-            return
-
-
-def _count_delimited_values(value) -> float:
-    if pd.isna(value):
-        return np.nan
-    parts = [part.strip() for part in re.split(r"[;,|+/]", str(value)) if part.strip()]
-    return float(len(set(parts))) if parts else np.nan
-
-
-def add_derived_factor_features(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+def add_current_table_features(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
     data = df.copy()
     data[DATE_COL] = pd.to_datetime(data[DATE_COL], errors="coerce")
     data["month"] = data[DATE_COL].dt.month
     data["year"] = data[DATE_COL].dt.year
-
-    numeric_candidates = set(NUMERIC_FACTOR_COLUMNS) | set(QUALITY_FEATURES) | {
-        target_col,
-        "rbd_p_ppm",
-    }
-    for col in sorted(numeric_candidates):
-        if col in data.columns:
-            data[col] = pd.to_numeric(data[col], errors="coerce")
-
-    timestamp_columns = [
-        "storage_start_ts",
-        "storage_end_ts",
-        "harvest_date",
-        "harvest_timestamp",
-        "feed_sampling_timestamp",
-        "sample_timestamp",
-        "sampling_timestamp",
-        "lab_received_timestamp",
-        "lab_result_timestamp",
-        "tank_in_timestamp",
-        "tank_out_timestamp",
-        "tank_fill_timestamp",
-        "tank_draw_timestamp",
-        "feed_tank_fill_ts",
-        "feed_tank_draw_ts",
-    ]
-    data = _parse_datetime_columns(data, timestamp_columns)
+    if "time_trend" not in data.columns:
+        data["time_trend"] = np.arange(len(data), dtype=float)
 
     ordered = data.sort_values(DATE_COL).copy()
     y = pd.to_numeric(ordered[target_col], errors="coerce")
     lag1 = y.shift(1)
     date_diff = ordered[DATE_COL].diff().dt.days
     lag1.loc[date_diff.gt(2)] = np.nan
-    ordered[f"{target_col}_lag1"] = lag1
-    ordered[f"{target_col}_roll3"] = lag1.rolling(window=3, min_periods=2).mean()
+    ordered["feed_p_ppm_lag1"] = lag1
+    ordered["feed_p_ppm_roll3"] = lag1.rolling(window=3, min_periods=2).mean()
     data = ordered.sort_index()
-
-    _derive_hours(
-        data,
-        "storage_hours",
-        [
-            ("storage_start_ts", "storage_end_ts"),
-            ("harvest_timestamp", "feed_sampling_timestamp"),
-            ("harvest_date", DATE_COL),
-        ],
-    )
-    _derive_hours(
-        data,
-        "tank_residence_hours",
-        [
-            ("tank_in_timestamp", "tank_out_timestamp"),
-            ("tank_fill_timestamp", "tank_draw_timestamp"),
-            ("feed_tank_fill_ts", "feed_tank_draw_ts"),
-            ("tank_fill_timestamp", "feed_sampling_timestamp"),
-        ],
-    )
-    _derive_hours(
-        data,
-        "sampling_delay_hours",
-        [
-            ("sample_timestamp", "lab_received_timestamp"),
-            ("sampling_timestamp", "lab_received_timestamp"),
-            ("feed_sampling_timestamp", "lab_received_timestamp"),
-        ],
-    )
-    _derive_hours(
-        data,
-        "lab_turnaround_hours",
-        [
-            ("lab_received_timestamp", "lab_result_timestamp"),
-            ("sample_timestamp", "lab_result_timestamp"),
-            ("sampling_timestamp", "lab_result_timestamp"),
-        ],
-    )
-
-    if "rainfall_mm" in data.columns:
-        rainfall = pd.to_numeric(data["rainfall_mm"], errors="coerce")
-        daily = (
-            pd.DataFrame({DATE_COL: data[DATE_COL], "rainfall_mm": rainfall})
-            .dropna(subset=[DATE_COL])
-            .groupby(DATE_COL)["rainfall_mm"]
-            .mean()
-            .sort_index()
-        )
-        if "rainfall_7d" not in data.columns and not daily.empty:
-            data["rainfall_7d"] = data[DATE_COL].map(daily.rolling("7D", min_periods=1).sum())
-        if "rainfall_30d" not in data.columns and not daily.empty:
-            data["rainfall_30d"] = data[DATE_COL].map(daily.rolling("30D", min_periods=1).sum())
-
-    if "source_count_in_tank" not in data.columns:
-        for count_col in ["source_count", "batch_count", "transport_batch_count"]:
-            if count_col in data.columns:
-                data["source_count_in_tank"] = pd.to_numeric(data[count_col], errors="coerce")
-                break
-        if "source_count_in_tank" not in data.columns:
-            for list_col in ["source_list", "mill_source_list", "batch_list"]:
-                if list_col in data.columns:
-                    data["source_count_in_tank"] = data[list_col].map(_count_delimited_values)
-                    break
-
-    if "mixed_batch_flag" not in data.columns:
-        if "source_count_in_tank" in data.columns:
-            data["mixed_batch_flag"] = (
-                pd.to_numeric(data["source_count_in_tank"], errors="coerce").gt(1).astype("Int64")
-            )
-        else:
-            for flag_col in ["tank_mixing_event", "transport_mixing_flag"]:
-                if flag_col in data.columns:
-                    data["mixed_batch_flag"] = data[flag_col]
-                    break
 
     if target_col in data.columns and "rbd_p_ppm" in data.columns:
         data["p_removal_delta"] = (
@@ -866,11 +438,11 @@ def _usable_columns(df: pd.DataFrame, columns: tuple[str, ...] | list[str]) -> l
 def build_factor_availability(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for spec in FACTOR_SPECS:
-        direct_found = _usable_columns(df, spec.direct_fields)
+        current_found = _usable_columns(df, spec.current_fields)
         proxy_found = _usable_columns(df, spec.proxy_fields)
-        if direct_found:
+        if current_found:
             status = "available"
-            status_cols = direct_found
+            status_cols = current_found
         elif proxy_found:
             status = "proxy_available"
             status_cols = proxy_found
@@ -891,10 +463,10 @@ def build_factor_availability(df: pd.DataFrame) -> pd.DataFrame:
                 "factor": spec.name,
                 "status": status,
                 "prediction_safe_for_feed_model": bool(spec.prediction_safe),
-                "direct_columns_found": _join_list(direct_found),
+                "current_table_columns_found": _join_list(current_found),
                 "proxy_columns_found": _join_list(proxy_found),
-                "missing_direct_fields": _join_list(
-                    [col for col in spec.direct_fields if col not in direct_found]
+                "missing_fields_or_context": (
+                    "" if status != "missing" else "no current-table field or useful proxy"
                 ),
                 "best_non_missing_rate": (
                     None if not non_missing_rates else round(max(non_missing_rates), 6)
@@ -908,13 +480,6 @@ def build_factor_availability(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=REPORT_COLUMNS["availability"])
 
 
-def _spec_by_key(key: str) -> FactorSpec:
-    for spec in FACTOR_SPECS:
-        if spec.key == key:
-            return spec
-    raise KeyError(key)
-
-
 def _is_prediction_excluded(feature: str) -> bool:
     if feature in PREDICTION_EXCLUDED_COLUMNS:
         return True
@@ -924,60 +489,16 @@ def _is_prediction_excluded(feature: str) -> bool:
 def _is_numeric_feature(df: pd.DataFrame, feature: str) -> bool:
     if feature == DATE_COL:
         return False
-    if feature in CATEGORICAL_FACTOR_COLUMNS:
-        return False
-    if feature in NUMERIC_FACTOR_COLUMNS:
-        return True
     converted = pd.to_numeric(df[feature], errors="coerce")
     non_missing = df[feature].notna().sum()
     return non_missing > 0 and converted.notna().sum() / max(non_missing, 1) >= 0.8
 
 
-def _partial_spearman(
-    df: pd.DataFrame, feature: str, target: str, controls: list[str]
-) -> tuple[float | None, float | None]:
-    controls = [col for col in controls if col in df.columns and col not in {feature, target}]
-    cols = list(dict.fromkeys([feature, target] + controls))
-    data = df[cols].dropna().copy()
-    if len(data) < 12 or data[feature].nunique() < 2 or data[target].nunique() < 2:
-        return None, None
-
-    x_rank = pd.to_numeric(data[feature], errors="coerce").rank()
-    y_rank = pd.to_numeric(data[target], errors="coerce").rank()
-    control_df = pd.DataFrame(index=data.index)
-    for col in controls:
-        if col not in data.columns:
-            continue
-        if pd.api.types.is_numeric_dtype(data[col]):
-            control_df[col] = pd.to_numeric(data[col], errors="coerce")
-        else:
-            dummies = pd.get_dummies(data[col].astype(str), prefix=col, drop_first=True)
-            control_df = pd.concat([control_df, dummies], axis=1)
-
-    control_df = control_df.replace([np.inf, -np.inf], np.nan).fillna(0)
-    if control_df.empty or control_df.shape[1] >= len(data) - 3:
-        return None, None
-
-    model_x = LinearRegression().fit(control_df, x_rank)
-    model_y = LinearRegression().fit(control_df, y_rank)
-    x_resid = x_rank - model_x.predict(control_df)
-    y_resid = y_rank - model_y.predict(control_df)
-    rho, p_value = scipy_stats.spearmanr(x_resid, y_resid, nan_policy="omit")
-    if not np.isfinite(rho):
-        return None, None
-    return float(rho), None if not np.isfinite(p_value) else float(p_value)
-
-
-def _numeric_univariate(
-    df: pd.DataFrame, feature: str, target: str
-) -> dict[str, object]:
-    cols = [feature, target]
-    if "month" in df.columns:
-        cols.append("month")
-    data = df[list(dict.fromkeys(cols))].copy()
+def _numeric_univariate(df: pd.DataFrame, feature: str, target: str) -> dict[str, object]:
+    data = df[[feature, target]].copy()
     data[feature] = pd.to_numeric(data[feature], errors="coerce")
     data[target] = pd.to_numeric(data[target], errors="coerce")
-    data = data.replace([np.inf, -np.inf], np.nan).dropna(subset=[feature, target])
+    data = data.replace([np.inf, -np.inf], np.nan).dropna()
     if len(data) < 8 or data[feature].nunique() < 2 or data[target].nunique() < 2:
         return {
             "test": "spearman",
@@ -985,33 +506,26 @@ def _numeric_univariate(
             "statistic": None,
             "p_value": None,
             "effect_size": None,
-            "partial_spearman_rho": None,
-            "partial_spearman_p_value": None,
             "notes": "insufficient_variation_or_samples",
         }
 
     rho, p_value = scipy_stats.spearmanr(data[feature], data[target], nan_policy="omit")
-    partial_rho, partial_p = _partial_spearman(data, feature, target, ["month"])
     return {
         "test": "spearman",
         "n": int(len(data)),
         "statistic": None if not np.isfinite(rho) else round(float(rho), 6),
         "p_value": None if not np.isfinite(p_value) else round(float(p_value), 6),
         "effect_size": None if not np.isfinite(rho) else round(abs(float(rho)), 6),
-        "partial_spearman_rho": None if partial_rho is None else round(partial_rho, 6),
-        "partial_spearman_p_value": None if partial_p is None else round(partial_p, 6),
         "notes": "",
     }
 
 
-def _categorical_univariate(
-    df: pd.DataFrame, feature: str, target: str
-) -> dict[str, object]:
+def _categorical_univariate(df: pd.DataFrame, feature: str, target: str) -> dict[str, object]:
     data = df[[feature, target]].copy()
     if feature == DATE_COL:
         data[feature] = pd.to_datetime(data[feature], errors="coerce").dt.to_period("M").astype(str)
     data[target] = pd.to_numeric(data[target], errors="coerce")
-    data = data.dropna(subset=[feature, target])
+    data = data.dropna()
     if data.empty:
         return {
             "test": "kruskal",
@@ -1019,8 +533,6 @@ def _categorical_univariate(
             "statistic": None,
             "p_value": None,
             "effect_size": None,
-            "partial_spearman_rho": None,
-            "partial_spearman_p_value": None,
             "notes": "no_complete_rows",
         }
 
@@ -1035,8 +547,6 @@ def _categorical_univariate(
             "statistic": None,
             "p_value": None,
             "effect_size": None,
-            "partial_spearman_rho": None,
-            "partial_spearman_p_value": None,
             "notes": "insufficient_category_support",
         }
 
@@ -1050,20 +560,13 @@ def _categorical_univariate(
         "statistic": None if not np.isfinite(stat) else round(float(stat), 6),
         "p_value": None if not np.isfinite(p_value) else round(float(p_value), 6),
         "effect_size": round(float(max(epsilon_sq, 0.0)), 6),
-        "partial_spearman_rho": None,
-        "partial_spearman_p_value": None,
         "notes": f"levels_tested={k}",
     }
 
 
 def _candidate_columns_for_spec(df: pd.DataFrame, spec: FactorSpec, status: str) -> list[str]:
     if status == "available":
-        candidates = _usable_columns(df, spec.direct_fields)
-        if spec.process_response:
-            candidates = [
-                col for col in candidates if col not in {"rbd_p_ppm", "p_removal_delta"}
-            ]
-        return candidates
+        return _usable_columns(df, spec.current_fields)
     if status == "proxy_available":
         return _usable_columns(df, spec.proxy_fields)
     return []
@@ -1088,11 +591,11 @@ def build_univariate_tests(
         for feature in candidates:
             if feature == target or target not in df.columns:
                 continue
-            if _is_numeric_feature(df, feature):
-                result = _numeric_univariate(df, feature, target)
-            else:
-                result = _categorical_univariate(df, feature, target)
-
+            result = (
+                _numeric_univariate(df, feature, target)
+                if _is_numeric_feature(df, feature)
+                else _categorical_univariate(df, feature, target)
+            )
             rows.append(
                 {
                     "factor_key": spec.key,
@@ -1101,34 +604,6 @@ def build_univariate_tests(
                     "feature": feature,
                     "target": target,
                     **result,
-                }
-            )
-
-    if "lab_duplicate_id" in df.columns:
-        replicate_target = "lab_p_replicate_ppm" if "lab_p_replicate_ppm" in df.columns else target_col
-        if replicate_target in df.columns:
-            grouped = (
-                df[["lab_duplicate_id", replicate_target]]
-                .dropna()
-                .groupby("lab_duplicate_id")[replicate_target]
-            )
-            variances = grouped.var().dropna()
-            replicated_groups = int((grouped.size() >= 2).sum())
-            rows.append(
-                {
-                    "factor_key": "lab_measurement_error",
-                    "category": "lab_quality",
-                    "factor": "lab measurement error",
-                    "feature": "lab_duplicate_id",
-                    "target": replicate_target,
-                    "test": "replicate_variance",
-                    "n": replicated_groups,
-                    "statistic": None if variances.empty else round(float(variances.mean()), 6),
-                    "p_value": None,
-                    "effect_size": None if variances.empty else round(float(variances.median()), 6),
-                    "partial_spearman_rho": None,
-                    "partial_spearman_p_value": None,
-                    "notes": "mean_and_median_within_duplicate_variance",
                 }
             )
 
@@ -1158,10 +633,12 @@ def _valid_categorical_features(df: pd.DataFrame, columns: list[str]) -> list[st
 
 def build_factor_feature_groups(df: pd.DataFrame) -> list[FactorFeatureGroup]:
     quality = _valid_numeric_features(df, QUALITY_FEATURES)
+    history = _valid_numeric_features(df, [*QUALITY_FEATURES, *HISTORY_STATE_FEATURES])
+    time_context = _valid_numeric_features(df, [*QUALITY_FEATURES, *TIME_CONTEXT_FEATURES])
+    combined = _valid_numeric_features(
+        df, [*QUALITY_FEATURES, *HISTORY_STATE_FEATURES, *TIME_CONTEXT_FEATURES]
+    )
     proxies = _valid_categorical_features(df, BASE_PROXY_CATEGORICAL)
-    history = _valid_numeric_features(df, [*QUALITY_FEATURES, *HISTORY_FEATURES])
-    extended_numeric = _valid_numeric_features(df, SAFE_EXTENDED_NUMERIC)
-    extended_categorical = _valid_categorical_features(df, SAFE_EXTENDED_CATEGORICAL)
 
     groups = [
         FactorFeatureGroup(
@@ -1171,21 +648,27 @@ def build_factor_feature_groups(df: pd.DataFrame) -> list[FactorFeatureGroup]:
             include_month=False,
         ),
         FactorFeatureGroup(
-            name="current_proxy_context",
+            name="history_state",
+            numeric_features=tuple(history),
+            categorical_features=(),
+            include_month=False,
+        ),
+        FactorFeatureGroup(
+            name="tank_source_context",
             numeric_features=tuple(quality),
             categorical_features=tuple(proxies),
+            include_month=False,
+        ),
+        FactorFeatureGroup(
+            name="time_operating_context",
+            numeric_features=tuple(time_context),
+            categorical_features=(),
             include_month=True,
         ),
         FactorFeatureGroup(
-            name="history_tank_proxy",
-            numeric_features=tuple(history),
+            name="combined_proxy_context",
+            numeric_features=tuple(combined),
             categorical_features=tuple(proxies),
-            include_month=True,
-        ),
-        FactorFeatureGroup(
-            name="extended_pre_feed_factors",
-            numeric_features=tuple(list(dict.fromkeys([*history, *extended_numeric]))),
-            categorical_features=tuple(list(dict.fromkeys([*proxies, *extended_categorical]))),
             include_month=True,
         ),
     ]
@@ -1211,9 +694,6 @@ def _filter_group_for_training(
 ) -> FactorFeatureGroup | None:
     numeric = []
     for feature in group.numeric_features:
-        if feature == "time_trend":
-            numeric.append(feature)
-            continue
         if feature not in df.columns:
             continue
         values = pd.to_numeric(df.loc[train_idx, feature], errors="coerce")
@@ -1337,6 +817,106 @@ def _fit_evaluate_split(
     )
 
 
+def _evaluate_monthly_rolling(
+    df: pd.DataFrame,
+    y: pd.Series,
+    group: FactorFeatureGroup,
+    spec: ModelSpec,
+    threshold: float,
+    min_train_months: int = 3,
+    min_train_samples: int = 60,
+    min_test_samples: int = 5,
+) -> list[dict[str, object]]:
+    data = df.copy()
+    data["_period"] = data[DATE_COL].dt.to_period("M")
+    periods = sorted(data["_period"].dropna().unique())
+    y_true_all = []
+    y_pred_all = []
+    train_n = 0
+    effective_group = None
+
+    for period_index, period in enumerate(periods):
+        if period_index < min_train_months:
+            continue
+        train_periods = periods[:period_index]
+        train_idx = data.index[data["_period"].isin(train_periods)]
+        test_idx = data.index[data["_period"].eq(period)]
+        if len(train_idx) < min_train_samples or len(test_idx) < min_test_samples:
+            continue
+
+        effective_group = _filter_group_for_training(data, group, train_idx)
+        if effective_group is None:
+            continue
+        X = data[effective_group.source_features].copy()
+        model = _build_model_pipeline(effective_group, spec)
+        model.fit(X.loc[train_idx], y.loc[train_idx])
+        pred = model.predict(X.loc[test_idx])
+        y_true_all.extend(y.loc[test_idx].tolist())
+        y_pred_all.extend(pred.tolist())
+        train_n = max(train_n, int(len(train_idx)))
+
+    if not y_true_all or effective_group is None:
+        return []
+
+    train_metrics = {"r2": None, "rmse": None, "mae": None, "n_samples": train_n}
+    test_metrics = _evaluate_predictions(y_true_all, y_pred_all)
+    risk = _risk_metrics(y_true_all, y_pred_all, threshold)
+    return [
+        _metric_row(
+            "monthly_rolling",
+            effective_group,
+            spec,
+            train_metrics,
+            test_metrics,
+            risk,
+            {
+                "n_windows": len(set(periods[min_train_months:])),
+                "test_period_start": str(periods[min_train_months]),
+                "test_period_end": str(periods[-1]),
+            },
+        )
+    ]
+
+
+def _build_permutation_importance(
+    df: pd.DataFrame,
+    y: pd.Series,
+    best_random: tuple[dict[str, object], Pipeline, FactorFeatureGroup, ModelSpec, object] | None,
+) -> pd.DataFrame:
+    if best_random is None:
+        return pd.DataFrame(columns=REPORT_COLUMNS["permutation"])
+    row, model, group, spec, test_idx = best_random
+    X_test = df.loc[test_idx, group.source_features].copy()
+    if len(X_test) < 5:
+        return pd.DataFrame(columns=REPORT_COLUMNS["permutation"])
+
+    result = permutation_importance(
+        model,
+        X_test,
+        y.loc[test_idx],
+        n_repeats=8,
+        random_state=RANDOM_STATE,
+        scoring="neg_root_mean_squared_error",
+        n_jobs=int(os.getenv("CPO_MODEL_N_JOBS", "1")),
+    )
+    rows = []
+    for feature, mean, std in zip(X_test.columns, result.importances_mean, result.importances_std):
+        rows.append(
+            {
+                "feature_group": row["feature_group"],
+                "model": spec.name,
+                "feature": feature,
+                "importance_mean_rmse_reduction": round(float(mean), 6),
+                "importance_std": round(float(std), 6),
+            }
+        )
+    return (
+        pd.DataFrame(rows, columns=REPORT_COLUMNS["permutation"])
+        .sort_values("importance_mean_rmse_reduction", ascending=False)
+        .reset_index(drop=True)
+    )
+
+
 def build_factor_model_comparison(
     df: pd.DataFrame, target_col: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1352,12 +932,12 @@ def build_factor_model_comparison(
     threshold = float(y.quantile(RISK_QUANTILE))
     groups = build_factor_feature_groups(data)
     rows = []
+    best_random = None
 
     all_idx = data.index
     random_train_idx, random_test_idx = train_test_split(
         all_idx, test_size=TEST_SIZE, random_state=RANDOM_STATE
     )
-    best_random = None
 
     for group in groups:
         for spec in MODEL_SPECS:
@@ -1433,134 +1013,51 @@ def build_factor_model_comparison(
                     if row is not None:
                         rows.append(row)
 
-            monthly_rows = _evaluate_monthly_rolling(data, y, group, spec, threshold)
-            rows.extend(monthly_rows)
+            rows.extend(_evaluate_monthly_rolling(data, y, group, spec, threshold))
 
     comparison = pd.DataFrame(rows, columns=REPORT_COLUMNS["model_comparison"])
     permutation = _build_permutation_importance(data, y, best_random)
     return comparison, permutation
 
 
-def _evaluate_monthly_rolling(
-    df: pd.DataFrame,
-    y: pd.Series,
-    group: FactorFeatureGroup,
-    spec: ModelSpec,
-    threshold: float,
-    min_train_months: int = 3,
-    min_train_samples: int = 60,
-    min_test_samples: int = 5,
-) -> list[dict[str, object]]:
-    data = df.copy()
-    data["_period"] = data[DATE_COL].dt.to_period("M")
-    periods = sorted(data["_period"].dropna().unique())
-    rows = []
-    y_true_all = []
-    y_pred_all = []
-    train_n = 0
-
-    for period_index, period in enumerate(periods):
-        if period_index < min_train_months:
-            continue
-        train_periods = periods[:period_index]
-        train_idx = data.index[data["_period"].isin(train_periods)]
-        test_idx = data.index[data["_period"].eq(period)]
-        if len(train_idx) < min_train_samples or len(test_idx) < min_test_samples:
-            continue
-
-        effective_group = _filter_group_for_training(data, group, train_idx)
-        if effective_group is None:
-            continue
-        X = data[effective_group.source_features].copy()
-        model = _build_model_pipeline(effective_group, spec)
-        model.fit(X.loc[train_idx], y.loc[train_idx])
-        pred = model.predict(X.loc[test_idx])
-        y_true_all.extend(y.loc[test_idx].tolist())
-        y_pred_all.extend(pred.tolist())
-        train_n = max(train_n, int(len(train_idx)))
-
-    if not y_true_all:
-        return rows
-
-    train_metrics = {"r2": None, "rmse": None, "mae": None, "n_samples": train_n}
-    test_metrics = _evaluate_predictions(y_true_all, y_pred_all)
-    risk = _risk_metrics(y_true_all, y_pred_all, threshold)
-    rows.append(
-        _metric_row(
-            "monthly_rolling",
-            effective_group,
-            spec,
-            train_metrics,
-            test_metrics,
-            risk,
-            {
-                "n_windows": len(set(periods[min_train_months:])),
-                "test_period_start": str(periods[min_train_months]),
-                "test_period_end": str(periods[-1]),
-            },
-        )
-    )
-    return rows
-
-
-def _build_permutation_importance(
-    df: pd.DataFrame,
-    y: pd.Series,
-    best_random: tuple[dict[str, object], Pipeline, FactorFeatureGroup, ModelSpec, object] | None,
-) -> pd.DataFrame:
-    if best_random is None:
-        return pd.DataFrame(columns=REPORT_COLUMNS["permutation"])
-    row, model, group, spec, test_idx = best_random
-    X_test = df.loc[test_idx, group.source_features].copy()
-    if len(X_test) < 5:
-        return pd.DataFrame(columns=REPORT_COLUMNS["permutation"])
-
-    result = permutation_importance(
-        model,
-        X_test,
-        y.loc[test_idx],
-        n_repeats=8,
-        random_state=RANDOM_STATE,
-        scoring="neg_root_mean_squared_error",
-        n_jobs=int(os.getenv("CPO_MODEL_N_JOBS", "1")),
-    )
-    rows = []
-    for feature, mean, std in zip(X_test.columns, result.importances_mean, result.importances_std):
-        rows.append(
-            {
-                "feature_group": row["feature_group"],
-                "model": spec.name,
-                "feature": feature,
-                "importance_mean_rmse_reduction": round(float(mean), 6),
-                "importance_std": round(float(std), 6),
-            }
-        )
-    return (
-        pd.DataFrame(rows, columns=REPORT_COLUMNS["permutation"])
-        .sort_values("importance_mean_rmse_reduction", ascending=False)
-        .reset_index(drop=True)
-    )
+def _best_metric(
+    comparison: pd.DataFrame,
+    group_name: str,
+    metric_col: str,
+    validations: tuple[str, ...] | None = None,
+    maximize: bool = False,
+) -> float | None:
+    if comparison.empty:
+        return None
+    subset = comparison[comparison["feature_group"].eq(group_name)]
+    if validations is not None:
+        subset = subset[subset["validation"].isin(validations)]
+    values = pd.to_numeric(subset[metric_col], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.max() if maximize else values.min())
 
 
 def _best_out_of_time_rmse(comparison: pd.DataFrame, group_name: str) -> float | None:
-    if comparison.empty:
-        return None
-    subset = comparison[
-        comparison["feature_group"].eq(group_name)
-        & comparison["validation"].isin(["blocked_time_holdout", "year_holdout", "monthly_rolling"])
-    ]
-    values = pd.to_numeric(subset["test_rmse"], errors="coerce").dropna()
-    return None if values.empty else float(values.min())
+    return _best_metric(comparison, group_name, "test_rmse", OUT_OF_TIME_VALIDATIONS)
+
+
+def _best_out_of_time_r2(comparison: pd.DataFrame, group_name: str) -> float | None:
+    return _best_metric(comparison, group_name, "test_r2", OUT_OF_TIME_VALIDATIONS, maximize=True)
 
 
 def _best_random_rmse(comparison: pd.DataFrame, group_name: str) -> float | None:
-    if comparison.empty:
-        return None
-    subset = comparison[
-        comparison["feature_group"].eq(group_name) & comparison["validation"].eq("random_split")
-    ]
-    values = pd.to_numeric(subset["test_rmse"], errors="coerce").dropna()
-    return None if values.empty else float(values.min())
+    return _best_metric(comparison, group_name, "test_rmse", ("random_split",))
+
+
+def _best_random_r2(comparison: pd.DataFrame, group_name: str) -> float | None:
+    return _best_metric(comparison, group_name, "test_r2", ("random_split",), maximize=True)
+
+
+def _best_out_of_time_p80_recall(comparison: pd.DataFrame, group_name: str) -> float | None:
+    return _best_metric(
+        comparison, group_name, "p80_recall", OUT_OF_TIME_VALIDATIONS, maximize=True
+    )
 
 
 def _best_univariate_for_factor(univariate: pd.DataFrame, factor_key: str) -> dict[str, object]:
@@ -1575,32 +1072,60 @@ def _best_univariate_for_factor(univariate: pd.DataFrame, factor_key: str) -> di
     return subset.iloc[0].to_dict()
 
 
+def _has_univariate_signal(best_uni: dict[str, object]) -> bool:
+    p_value = best_uni.get("p_value")
+    effect_size = best_uni.get("effect_size")
+    return (
+        p_value is not None
+        and not pd.isna(p_value)
+        and float(p_value) < 0.05
+        and (effect_size is None or pd.isna(effect_size) or float(effect_size) >= 0.05)
+    )
+
+
 def build_evidence_matrix(
     availability: pd.DataFrame,
     univariate: pd.DataFrame,
     comparison: pd.DataFrame,
 ) -> pd.DataFrame:
     baseline_out = _best_out_of_time_rmse(comparison, "current_quality_baseline")
-    proxy_out = _best_out_of_time_rmse(comparison, "current_proxy_context")
-    history_out = _best_out_of_time_rmse(comparison, "history_tank_proxy")
-    extended_out = _best_out_of_time_rmse(comparison, "extended_pre_feed_factors")
-    baseline_random = _best_random_rmse(comparison, "current_quality_baseline")
-    extended_random = _best_random_rmse(comparison, "extended_pre_feed_factors")
+    history_out = _best_out_of_time_rmse(comparison, "history_state")
+    tank_out = _best_out_of_time_rmse(comparison, "tank_source_context")
+    time_out = _best_out_of_time_rmse(comparison, "time_operating_context")
+    combined_out = _best_out_of_time_rmse(comparison, "combined_proxy_context")
 
-    proxy_improved = (
-        baseline_out is not None and proxy_out is not None and proxy_out < baseline_out - 0.01
-    )
-    history_improved = (
-        baseline_out is not None and history_out is not None and history_out < baseline_out - 0.01
-    )
-    extended_improved = (
-        history_out is not None and extended_out is not None and extended_out < history_out - 0.01
-    )
-    extended_random_improved = (
-        baseline_random is not None
-        and extended_random is not None
-        and extended_random < baseline_random - 0.01
-    )
+    def improved(group_out: float | None, reference: float | None = baseline_out) -> bool:
+        return (
+            reference is not None
+            and group_out is not None
+            and group_out < reference - MIN_RMSE_LIFT
+        )
+
+    history_improved = improved(history_out)
+    tank_improved = improved(tank_out)
+    time_improved = improved(time_out)
+    combined_improved = improved(combined_out)
+    proxy_signal_by_factor = {
+        "fruit_origin_mill_source": tank_improved or combined_improved,
+        "rain_harvest_conditions": time_improved or combined_improved,
+        "storage_time_temperature": tank_improved or time_improved or combined_improved,
+        "tank_mixing": tank_improved or history_improved or combined_improved,
+        "transport_batch_mixing": tank_improved or combined_improved,
+    }
+    related_group_by_factor = {
+        "fruit_origin_mill_source": "tank_source_context/combined_proxy_context",
+        "rain_harvest_conditions": "time_operating_context/combined_proxy_context",
+        "storage_time_temperature": "tank_source_context/time_operating_context/combined_proxy_context",
+        "tank_mixing": "history_state/tank_source_context/combined_proxy_context",
+        "transport_batch_mixing": "tank_source_context/combined_proxy_context",
+    }
+    not_assessable = {
+        "soil_fertility",
+        "lab_sampling_delay",
+        "lab_measurement_error",
+        "process_regime_change",
+        "metal_phospholipid_complexes",
+    }
 
     rows = []
     availability_by_key = availability.set_index("factor_key").to_dict(orient="index")
@@ -1608,51 +1133,32 @@ def build_evidence_matrix(
         available = availability_by_key[spec.key]
         status = available["status"]
         best_uni = _best_univariate_for_factor(univariate, spec.key)
-        p_value = best_uni.get("p_value")
-        effect_size = best_uni.get("effect_size")
-        has_univariate_signal = (
-            p_value is not None
-            and not pd.isna(p_value)
-            and float(p_value) < 0.05
-            and (effect_size is None or pd.isna(effect_size) or float(effect_size) >= 0.05)
-        )
+        has_signal = _has_univariate_signal(best_uni)
 
-        if spec.process_response and status != "available":
-            evidence = "needs_data_collection"
-            summary = "No direct process-response field is available; date proxy is not enough to validate process regime change."
-            related_group = "process_response_univariate_only"
-        elif status == "missing":
-            evidence = "needs_data_collection"
-            summary = "No direct or proxy field is available in the current dataset."
+        if spec.key in not_assessable:
+            evidence = "not_assessable"
+            summary = "Current 2024/2025 tables do not contain direct fields or useful proxy evidence to isolate this factor."
             related_group = ""
-        elif status == "proxy_available":
-            if proxy_improved or history_improved:
-                evidence = "weak_proxy_evidence"
-                summary = "Only proxy fields are present; proxy/context groups improve out-of-time RMSE."
-            else:
-                evidence = "inconclusive_proxy"
-                summary = "Only proxy fields are present and stable out-of-time lift is not established."
-            related_group = "current_proxy_context/history_tank_proxy"
         elif spec.process_response:
-            if has_univariate_signal:
-                evidence = "process_response_signal"
-                summary = "Direct process-response fields show univariate signal against RBD P or P removal delta."
+            if has_signal:
+                evidence = "observed_effect"
+                summary = "Direct acid/bleaching dosage fields show an observed relationship with RBD P or P removal delta."
             else:
-                evidence = "inconclusive_process_response"
-                summary = "Direct process-response fields are present but signal is not yet robust."
+                evidence = "not_assessable"
+                summary = "Direct process-response fields are present, but a stable relationship is not established."
             related_group = "process_response_univariate_only"
-        elif extended_improved and has_univariate_signal:
-            evidence = "supported"
-            summary = "Direct fields are present, show univariate signal, and improve out-of-time model performance."
-            related_group = "extended_pre_feed_factors"
-        elif extended_random_improved or has_univariate_signal:
-            evidence = "weak_evidence"
-            summary = "Direct fields are present, but evidence is limited to univariate or random-split lift."
-            related_group = "extended_pre_feed_factors"
+        elif status == "proxy_available":
+            if proxy_signal_by_factor.get(spec.key, False) or has_signal:
+                evidence = "proxy_supported"
+                summary = "Only proxy fields are present; current-table proxy signals support hidden context but do not identify the exact factor."
+            else:
+                evidence = "not_assessable"
+                summary = "Only proxy fields are present, and current validation does not show a stable enough proxy signal."
+            related_group = related_group_by_factor.get(spec.key, "combined_proxy_context")
         else:
-            evidence = "inconclusive"
-            summary = "Direct fields are present, but no stable relationship has been established."
-            related_group = "extended_pre_feed_factors"
+            evidence = "not_assessable"
+            summary = "Current 2024/2025 tables contain no current-table evidence for this factor."
+            related_group = ""
 
         rows.append(
             {
@@ -1663,8 +1169,8 @@ def build_evidence_matrix(
                 "evidence_level": evidence,
                 "verification_summary": summary,
                 "best_feature": best_uni.get("feature"),
-                "best_p_value": p_value,
-                "best_effect_size": effect_size,
+                "best_p_value": best_uni.get("p_value"),
+                "best_effect_size": best_uni.get("effect_size"),
                 "related_model_group": related_group,
                 "next_action": spec.recommendation,
             }
@@ -1673,36 +1179,184 @@ def build_evidence_matrix(
     return pd.DataFrame(rows, columns=REPORT_COLUMNS["evidence"])
 
 
+def _format_value(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "NA"
+    return f"{value:.3f}"
+
+
+def build_proxy_factor_impact_summary(comparison: pd.DataFrame) -> pd.DataFrame:
+    baseline_out = _best_out_of_time_rmse(comparison, "current_quality_baseline")
+    cluster_specs = [
+        (
+            "quality_baseline",
+            "current_quality_baseline",
+            "Current feed quality fields only.",
+        ),
+        (
+            "history_state",
+            "history_state",
+            "Recent feed P lag/rolling state available before the next prediction.",
+        ),
+        (
+            "tank_source_context",
+            "tank_source_context",
+            "Feed tank and source-file proxies for hidden source, tank usage, storage, and mixing context.",
+        ),
+        (
+            "time_operating_context",
+            "time_operating_context",
+            "Date/month/time proxies for seasonality, procurement mix, and operating context.",
+        ),
+        (
+            "combined_proxy_context",
+            "combined_proxy_context",
+            "Combined history, tank/source, and time proxy context.",
+        ),
+    ]
+
+    rows = []
+    for proxy_cluster, feature_group, description in cluster_specs:
+        random_rmse = _best_random_rmse(comparison, feature_group)
+        random_r2 = _best_random_r2(comparison, feature_group)
+        out_rmse = _best_out_of_time_rmse(comparison, feature_group)
+        out_r2 = _best_out_of_time_r2(comparison, feature_group)
+        p80_recall = _best_out_of_time_p80_recall(comparison, feature_group)
+        delta = None
+        if baseline_out is not None and out_rmse is not None:
+            delta = baseline_out - out_rmse
+
+        if feature_group == "current_quality_baseline":
+            interpretation = "baseline_quality_only"
+        elif delta is not None and delta > MIN_RMSE_LIFT:
+            interpretation = "proxy_supported_out_of_time_improvement"
+        elif random_rmse is not None:
+            interpretation = "random_split_or_descriptive_signal_only"
+        else:
+            interpretation = "not_tested_or_insufficient_data"
+
+        rows.append(
+            {
+                "proxy_cluster": proxy_cluster,
+                "feature_group": feature_group,
+                "description": description,
+                "best_random_rmse": random_rmse,
+                "best_random_r2": random_r2,
+                "best_out_of_time_rmse": out_rmse,
+                "best_out_of_time_r2": out_r2,
+                "baseline_out_of_time_rmse": baseline_out,
+                "out_of_time_rmse_delta_vs_baseline": delta,
+                "best_p80_recall": p80_recall,
+                "interpretation": interpretation,
+            }
+        )
+
+    return pd.DataFrame(rows, columns=REPORT_COLUMNS["proxy_impact"])
+
+
+def build_proxy_to_hypothesis_mapping(
+    evidence: pd.DataFrame, proxy_impact: pd.DataFrame
+) -> pd.DataFrame:
+    evidence_by_key = evidence.set_index("factor_key")["evidence_level"].to_dict()
+    impact_by_cluster = proxy_impact.set_index("proxy_cluster")["interpretation"].to_dict()
+
+    def proxy_level(cluster: str, related_factor_keys: tuple[str, ...] = ()) -> str:
+        interpretation = str(impact_by_cluster.get(cluster, ""))
+        if "out_of_time_improvement" in interpretation:
+            return "proxy_supported"
+        if any(evidence_by_key.get(key) == "proxy_supported" for key in related_factor_keys):
+            return "proxy_supported"
+        return "not_assessable"
+
+    process_level = evidence_by_key.get("acid_bleaching_response", "not_assessable")
+    rows = [
+        {
+            "proxy_cluster": "history_state",
+            "proxy_features": "feed_p_ppm_lag1|feed_p_ppm_roll3",
+            "possible_unobserved_factors": "recent feed P state|carryover|unobserved upstream/tank context",
+            "evidence_level": proxy_level("history_state"),
+            "interpretation": "History features can support prediction, but they do not reveal which hidden upstream factor caused the prior P level.",
+            "allowed_wording": "history-state proxies show predictive signal for feed P",
+            "forbidden_wording": "storage, origin, or chemistry mechanism is confirmed by lag features",
+        },
+        {
+            "proxy_cluster": "tank_source_context",
+            "proxy_features": "feed_tank|source_file|feed_type",
+            "possible_unobserved_factors": "tank usage|source mix|storage/mixing|transport/batch context|mill/source origin",
+            "evidence_level": proxy_level(
+                "tank_source_context",
+                (
+                    "fruit_origin_mill_source",
+                    "storage_time_temperature",
+                    "tank_mixing",
+                    "transport_batch_mixing",
+                ),
+            ),
+            "interpretation": "Tank/source proxies may capture hidden operational context, but current tables cannot decompose that context.",
+            "allowed_wording": "tank/source context is proxy-supported",
+            "forbidden_wording": "mill origin, storage time, or mixing is directly confirmed",
+        },
+        {
+            "proxy_cluster": "time_operating_context",
+            "proxy_features": "date|month|time_trend",
+            "possible_unobserved_factors": "seasonality|weather/harvest conditions|procurement mix|operating context|missing-month transition",
+            "evidence_level": proxy_level(
+                "time_operating_context",
+                ("rain_harvest_conditions", "storage_time_temperature"),
+            ),
+            "interpretation": "Time proxies can show hidden context shifts, but cannot separate rainfall, harvest, or process-regime causes.",
+            "allowed_wording": "time operating context is proxy-supported",
+            "forbidden_wording": "rainfall, harvest condition, or process regime is directly confirmed",
+        },
+        {
+            "proxy_cluster": "process_response",
+            "proxy_features": "acid_dosing_pct|bleaching_earth_dosing_pct|dosage_total_pct|acid_x_bleaching",
+            "possible_unobserved_factors": "downstream process response|RBD P removal behavior",
+            "evidence_level": process_level,
+            "interpretation": "Dosing fields are direct current-table fields for process-response discussion and are excluded from feed P prediction.",
+            "allowed_wording": "acid/bleaching dosage shows observed process-response evidence against P removal metrics",
+            "forbidden_wording": "dosing variables prove feed P is predictable or support automatic dosage optimization",
+        },
+        {
+            "proxy_cluster": "not_assessable_current_tables",
+            "proxy_features": "",
+            "possible_unobserved_factors": "soil fertility|lab sampling delay|lab measurement error|metal-phospholipid complexes|direct process regime",
+            "evidence_level": "not_assessable",
+            "interpretation": "Current 2024/2025 tables have no direct fields and no useful proxy to isolate these factors.",
+            "allowed_wording": "these factors remain plausible but not assessable with current tables",
+            "forbidden_wording": "soil, lab error, metals, or process regime effects are confirmed",
+        },
+    ]
+    return pd.DataFrame(rows, columns=REPORT_COLUMNS["proxy_mapping"])
+
+
 def write_recommendations_md(
     output_path: Path,
-    join_diag: pd.DataFrame,
     availability: pd.DataFrame,
     evidence: pd.DataFrame,
     comparison: pd.DataFrame,
 ) -> None:
     status_counts = availability["status"].value_counts().to_dict()
     evidence_counts = evidence["evidence_level"].value_counts().to_dict()
-    join_row = join_diag.iloc[0].to_dict()
 
     lines = [
         "# Potential Influencing Factors Validation",
         "",
         "## Data Coverage",
-        f"- Sidecar status: `{join_row['status']}`",
-        f"- Join key: `{join_row['join_key'] or 'NA'}`",
-        f"- Match rate: {join_row['match_rate']}",
+        "- Current conclusion scope: existing 2024/2025 quality tables only.",
+        "- No sidecar, weather, soil, lab, source, tank, or process-regime records are ingested.",
         f"- Availability counts: {json.dumps(status_counts, ensure_ascii=False, sort_keys=True)}",
         f"- Evidence counts: {json.dumps(evidence_counts, ensure_ascii=False, sort_keys=True)}",
         "",
         "## Model Boundary",
-        "- Feed phosphorus models use only current quality, source/tank/date proxy, history, and prediction-time pre-feed fields.",
-        "- RBD variables, acid dosing, bleaching earth dosing, lab turnaround, and P removal delta are excluded from feed prediction.",
-        "- Acid/bleaching and process-regime fields are evaluated only as process-response evidence against RBD P or P removal delta.",
+        "- Feed phosphorus models use only current quality, history-state, source/tank, and time-context fields available before prediction.",
+        "- RBD variables, acid dosing, bleaching earth dosing, and P removal delta are excluded from feed prediction.",
+        "- Acid/bleaching fields are evaluated only as process-response evidence against RBD P or P removal delta.",
         "",
-        "## Highest-Priority Data Gaps",
+        "## Not Assessable With Current Tables",
     ]
 
-    gaps = evidence[evidence["evidence_level"].eq("needs_data_collection")]
+    gaps = evidence[evidence["evidence_level"].eq("not_assessable")]
     for row in gaps.head(8).to_dict(orient="records"):
         lines.append(f"- `{row['factor_key']}`: {row['next_action']}")
 
@@ -1724,64 +1378,137 @@ def write_recommendations_md(
             rmse = "NA" if pd.isna(row["test_rmse"]) else f"{row['test_rmse']:.3f}"
             lines.append(f"- `{row['validation']}` / `{row['feature_group']}`: best RMSE {rmse}")
 
-    lines.append("")
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    lines.extend(
+        [
+            "",
+            "## Wording Guardrails",
+            "- Use `observed_effect` only for direct current-table process-response relationships.",
+            "- Use `proxy_supported` for history, tank/source, and time-context signals that cannot identify a hidden cause.",
+            "- Use `not_assessable` for soil, lab, metals, process regime, and other factors without direct current-table fields.",
+            "- Do not claim rainfall, soil fertility, storage time, mill origin, metal complexes, lab error, production-grade prediction, or automatic dosing optimization are confirmed.",
+        ]
+    )
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_final_factor_conclusion_md(
+    output_path: Path,
+    evidence: pd.DataFrame,
+    proxy_impact: pd.DataFrame,
+    proxy_mapping: pd.DataFrame,
+) -> None:
+    counts = evidence["evidence_level"].value_counts().to_dict()
+    impact_by_cluster = proxy_impact.set_index("proxy_cluster").to_dict(orient="index")
+    baseline = impact_by_cluster.get("quality_baseline", {})
+    combined = impact_by_cluster.get("combined_proxy_context", {})
+    history = impact_by_cluster.get("history_state", {})
+    tank = impact_by_cluster.get("tank_source_context", {})
+    time_context = impact_by_cluster.get("time_operating_context", {})
+    process_rows = evidence[evidence["factor_key"].eq("acid_bleaching_response")]
+    process_level = (
+        "not_assessable" if process_rows.empty else process_rows.iloc[0]["evidence_level"]
+    )
+
+    lines = [
+        "# Final Factor Conclusion",
+        "",
+        "## Scope",
+        "- This phase uses only the existing 2024 and 2025 quality tables.",
+        "- No enterprise sidecar, weather, soil, lab, source, tank, or process-regime records are used.",
+        "- The report confirms observed proxy effects where possible, not the exact hidden physical or operational causes.",
+        "",
+        "## Evidence Classification",
+        f"- Evidence counts: {json.dumps(counts, ensure_ascii=False, sort_keys=True)}",
+        f"- Quality-only baseline best out-of-time RMSE: {_format_value(baseline.get('best_out_of_time_rmse'))}",
+        f"- History-state best out-of-time RMSE delta vs baseline: {_format_value(history.get('out_of_time_rmse_delta_vs_baseline'))}",
+        f"- Tank/source best out-of-time RMSE delta vs baseline: {_format_value(tank.get('out_of_time_rmse_delta_vs_baseline'))}",
+        f"- Time-context best out-of-time RMSE delta vs baseline: {_format_value(time_context.get('out_of_time_rmse_delta_vs_baseline'))}",
+        f"- Combined proxy-context best out-of-time RMSE delta vs baseline: {_format_value(combined.get('out_of_time_rmse_delta_vs_baseline'))}",
+        f"- Combined proxy-context best out-of-time p80 recall: {_format_value(combined.get('best_p80_recall'))}",
+        "",
+        "## Supported Conclusions",
+        "- Current quality variables alone remain weak for feed P prediction.",
+        "- History-state and combined proxy context show the strongest out-of-time lift; tank/source has smaller standalone lift, while time context is proxy-supported mainly through date/month signals rather than stable standalone model lift.",
+        "- These proxies indicate hidden context matters, but they cannot identify which exact unobserved factor is responsible.",
+        f"- Acid/bleaching dosage response is classified as `{process_level}` for RBD P or P-removal discussion only.",
+        "",
+        "## Not Directly Confirmed",
+        "- Rainfall, harvest condition, soil fertility, storage time, transport mixing, mill origin, lab error, process regime, and metal-phospholipid mechanisms are not directly confirmed by the current tables.",
+        "- The current evidence does not support production-grade automatic phosphorus prediction, lab-test replacement, or automatic acid/bleaching optimization.",
+        "",
+        "## Proxy Wording Guardrails",
+    ]
+
+    for row in proxy_mapping.to_dict(orient="records"):
+        lines.append(
+            f"- `{row['proxy_cluster']}`: allowed: {row['allowed_wording']}; avoid: {row['forbidden_wording']}."
+        )
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_pipeline(
     input_path: str | Path,
     output_dir: str | Path,
     target_col: str = DEFAULT_TARGET_COL,
-    factor_input: str | Path | None = None,
 ) -> dict[str, object]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
     base = _load_model_source(input_path, target_col)
-    merged, join_diag = merge_factor_sidecar(base, factor_input)
-    frame = add_derived_factor_features(merged, target_col)
+    frame = add_current_table_features(base, target_col)
 
     availability = build_factor_availability(frame)
     univariate = build_univariate_tests(frame, availability, target_col)
     comparison, permutation = build_factor_model_comparison(frame, target_col)
     evidence = build_evidence_matrix(availability, univariate, comparison)
+    proxy_impact = build_proxy_factor_impact_summary(comparison)
+    proxy_mapping = build_proxy_to_hypothesis_mapping(evidence, proxy_impact)
 
     availability.to_csv(output / "factor_availability.csv", index=False)
-    join_diag.to_csv(output / "factor_join_diagnostics.csv", index=False)
     univariate.to_csv(output / "factor_univariate_tests.csv", index=False)
     comparison.to_csv(output / "factor_group_model_comparison.csv", index=False)
     permutation.to_csv(output / "factor_permutation_importance.csv", index=False)
     evidence.to_csv(output / "factor_evidence_matrix.csv", index=False)
+    proxy_impact.to_csv(output / "proxy_factor_impact_summary.csv", index=False)
+    proxy_mapping.to_csv(output / "proxy_to_hypothesis_mapping.csv", index=False)
     write_recommendations_md(
         output / "factor_recommendations.md",
-        join_diag,
         availability,
         evidence,
         comparison,
+    )
+    write_final_factor_conclusion_md(
+        output / "final_factor_conclusion.md",
+        evidence,
+        proxy_impact,
+        proxy_mapping,
     )
 
     summary = {
         "target_col": target_col,
         "input_path": str(input_path),
-        "factor_input": None if not factor_input else str(factor_input),
         "n_rows": int(len(frame)),
         "date_min": str(frame[DATE_COL].min().date()) if frame[DATE_COL].notna().any() else None,
         "date_max": str(frame[DATE_COL].max().date()) if frame[DATE_COL].notna().any() else None,
-        "join_diagnostics": join_diag.to_dict(orient="records"),
         "availability_counts": availability["status"].value_counts().to_dict(),
         "evidence_counts": evidence["evidence_level"].value_counts().to_dict(),
         "output_files": {
             "availability": "factor_availability.csv",
-            "join_diagnostics": "factor_join_diagnostics.csv",
             "univariate_tests": "factor_univariate_tests.csv",
             "group_model_comparison": "factor_group_model_comparison.csv",
             "permutation_importance": "factor_permutation_importance.csv",
             "evidence_matrix": "factor_evidence_matrix.csv",
+            "proxy_factor_impact_summary": "proxy_factor_impact_summary.csv",
+            "proxy_to_hypothesis_mapping": "proxy_to_hypothesis_mapping.csv",
             "recommendations": "factor_recommendations.md",
+            "final_factor_conclusion": "final_factor_conclusion.md",
         },
         "notes": [
-            "Missing sidecar fields are reported as data-collection needs, not as negative evidence.",
-            "Proxy evidence should not be described as causal proof.",
+            "Current-phase conclusions are based only on the 2024/2025 quality tables.",
+            "Proxy-supported evidence should not be described as direct or causal proof of a specific hidden factor.",
+            "Not-assessable factors remain plausible but unconfirmed with current tables.",
             "Process-response features are excluded from feed phosphorus prediction models.",
         ],
     }
@@ -1792,22 +1519,16 @@ def run_pipeline(
 
 def parse_args():
     default_target_col = os.getenv("CPO_TARGET_COL", DEFAULT_TARGET_COL)
-    default_factor_input = os.getenv("CPO_FACTOR_INPUT", "").strip()
-    parser = argparse.ArgumentParser(description="Validate potential phosphorus influencing factors")
+    parser = argparse.ArgumentParser(description="Validate current-table proxy factors")
     parser.add_argument(
         "--input",
         default=str(LOCAL_PROCESSED_DATA_DIR / "model_source.csv"),
         help=f"Path to model_source.csv (default: {LOCAL_PROCESSED_DATA_DIR / 'model_source.csv'})",
     )
     parser.add_argument(
-        "--factor-input",
-        default=default_factor_input or None,
-        help="Optional CSV/XLSX sidecar containing factor fields.",
-    )
-    parser.add_argument(
         "--output-dir",
         default=str(LOCAL_FACTOR_VALIDATION_REPORTS_DIR),
-        help=f"Directory for factor validation outputs (default: {LOCAL_FACTOR_VALIDATION_REPORTS_DIR})",
+        help=f"Directory for outputs (default: {LOCAL_FACTOR_VALIDATION_REPORTS_DIR})",
     )
     parser.add_argument(
         "--target-col",
@@ -1823,7 +1544,6 @@ def main():
         input_path=args.input,
         output_dir=args.output_dir,
         target_col=args.target_col,
-        factor_input=args.factor_input,
     )
     print(json.dumps(_json_safe(summary), ensure_ascii=False, indent=2, allow_nan=False))
 
