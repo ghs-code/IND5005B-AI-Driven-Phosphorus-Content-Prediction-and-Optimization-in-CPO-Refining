@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+.cache/
 
 # Virtual environments
 .venv/
@@ -24,7 +25,7 @@ local_data/
 local_reports/
 local_runs/
 
-# Reference files
-reference/
-plan.md
+# Local Reference Files
+Reference/
+Plan.md
 SUMMARY.md
