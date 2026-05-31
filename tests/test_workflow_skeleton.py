@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from cpo_phosphorus.workflows.core_factors import run_core_factor_check
+from cpo_phosphorus.workflows.delivery import EnterpriseRunConfig, run_enterprise_delivery
 from cpo_phosphorus.workflows.internal_factors import run_internal_factor_check
 from cpo_phosphorus.workflows.validate_data import run_data_validation
 
@@ -14,8 +15,9 @@ class WorkflowSkeletonTests(unittest.TestCase):
         frame = pd.DataFrame([[None] * 21 for _ in range(4 + rows)])
         for idx in range(rows):
             row = 4 + idx
+            date = pd.Timestamp(year=year, month=1, day=1) + pd.Timedelta(days=idx)
             values = [
-                pd.Timestamp(year=year, month=1, day=idx + 1),
+                date,
                 0.065,
                 1.4,
                 "NT1",
@@ -202,6 +204,48 @@ class WorkflowSkeletonTests(unittest.TestCase):
         self.assertEqual(summary["status"], "needs_attention")
         self.assertEqual(summary["join_diagnostics"]["status"], "missing_join_keys")
         self.assertEqual(summary["evidence_counts"].get("not_assessable"), 1)
+
+    def test_enterprise_delivery_writes_to_selected_output_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quality = root / "quality.xlsx"
+            internal = root / "internal.csv"
+            output = root / "deliveries"
+            self._write_quality_workbook(quality, 2025, rows=60)
+            dates = pd.date_range("2025-01-01", periods=60)
+            pd.DataFrame(
+                {
+                    "date": dates,
+                    "feed_tank": ["ST14"] * 60,
+                    "storage_hours": list(range(60)),
+                }
+            ).to_csv(internal, index=False)
+
+            result = run_enterprise_delivery(
+                EnterpriseRunConfig(
+                    quality_inputs=[str(quality)],
+                    internal_inputs=[str(internal)],
+                    output_dir=str(output),
+                    target_col="feed_p_ppm",
+                    join_keys="date,feed_tank",
+                    internal_factor_fields="storage_hours",
+                    run_risk_scoring=False,
+                    run_id="test_run",
+                )
+            )
+
+            run_dir = output / "test_run"
+            self.assertEqual(result["status"], "complete")
+            self.assertTrue((run_dir / "run_manifest.json").exists())
+            self.assertTrue((run_dir / "enterprise_summary.html").exists())
+            self.assertTrue((run_dir / "core_factor_screening.csv").exists())
+            self.assertTrue((run_dir / "internal_factor_evidence.csv").exists())
+            self.assertTrue((run_dir / "processed" / "model_source.csv").exists())
+            self.assertFalse((root / "reports").exists())
+            self.assertFalse((root / "outputs").exists())
+            html = (run_dir / "enterprise_summary.html").read_text(encoding="utf-8")
+            self.assertIn("PhosphorAI Enterprise Summary", html)
+            self.assertIn("Quality rows", html)
 
 
 if __name__ == "__main__":

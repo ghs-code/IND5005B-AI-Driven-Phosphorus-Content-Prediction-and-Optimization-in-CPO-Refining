@@ -9,8 +9,8 @@ def main():
         import streamlit  # noqa: F401
     except ModuleNotFoundError:
         print(
-            "Streamlit is not installed. Install the UI extra with: "
-            "python -m pip install -e '.[ui]'",
+            "Streamlit is not installed. Install the project with: "
+            "python -m pip install -e .",
             file=sys.stderr,
         )
         raise SystemExit(1)

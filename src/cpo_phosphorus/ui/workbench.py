@@ -1,149 +1,178 @@
-"""Streamlit workbench for enterprise modular validation."""
+"""Streamlit workbench for enterprise delivery runs."""
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
 import streamlit as st
 
-from cpo_phosphorus.workflows.core_factors import run_core_factor_check
-from cpo_phosphorus.workflows.internal_factors import run_internal_factor_check
-from cpo_phosphorus.workflows.risk_scoring import run_risk_scoring
-from cpo_phosphorus.workflows.validate_data import run_data_validation
+from cpo_phosphorus.workflows.delivery import EnterpriseRunConfig, run_enterprise_delivery
+
+
+def _split_paths(value: str) -> list[str]:
+    return [line.strip() for line in value.splitlines() if line.strip()]
+
+
+def _save_uploads(uploaded_files, directory: Path) -> list[str]:
+    paths = []
+    for uploaded in uploaded_files:
+        target = directory / uploaded.name
+        target.write_bytes(uploaded.getbuffer())
+        paths.append(str(target))
+    return paths
+
+
+def _metric_value(summary: dict | None, key: str, default="n/a"):
+    if not summary:
+        return default
+    value = summary.get(key, default)
+    return default if value is None else value
+
+
+def _nested_value(summary: dict | None, *keys, default="n/a"):
+    value = summary or {}
+    for key in keys:
+        if not isinstance(value, dict):
+            return default
+        value = value.get(key)
+    return default if value is None else value
+
+
+def _show_quality(summary: dict | None) -> None:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Files", _metric_value(summary, "file_count"))
+    col2.metric("Rows", _metric_value(summary, "row_count"))
+    col3.metric("Target rows", _metric_value(summary, "valid_target_rows"))
+    col4.metric("Template issues", _metric_value(summary, "template_issue_count"))
+
+
+def _show_internal(summary: dict | None) -> None:
+    join = summary.get("join_diagnostics", {}) if summary else {}
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Status", _metric_value(summary, "status"))
+    col2.metric("Match rate", join.get("match_rate", "n/a"))
+    col3.metric("Matched rows", join.get("matched_rows", "n/a"))
+    col4.metric("Duplicate keys", join.get("duplicate_internal_key_rows", "n/a"))
+
+
+def _show_risk(summary: dict | None) -> None:
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Samples", _metric_value(summary, "n_samples"))
+    col2.metric("p80 recall", _nested_value(summary, "decision_summary", "selected_model_p80_recall"))
+    col3.metric(
+        "p80 false negative",
+        _nested_value(summary, "decision_summary", "selected_model_p80_false_negative_rate"),
+    )
 
 
 def main() -> None:
     st.set_page_config(page_title="PhosphorAI Risk Workbench", layout="wide")
     st.title("PhosphorAI Risk Workbench")
-    st.caption("Enterprise modular validation prototype")
-    st.info("Milestone 2 supports multi-file quality-table intake and template checks.")
+    st.caption("Enterprise UI delivery")
 
-    tab_upload, tab_core, tab_internal, tab_risk, tab_export = st.tabs(
-        ["Upload & Validate", "Core Factors", "Internal Factors", "Risk Scoring", "Export"]
-    )
+    default_input = os.getenv("PHOSPHORAI_DEFAULT_INPUT_DIR", "local_data/raw")
+    default_output = os.getenv("PHOSPHORAI_DEFAULT_OUTPUT_DIR", "local_data/deliveries")
+    default_target = os.getenv("CPO_TARGET_COL", "feed_p_ppm")
+    default_vif = float(os.getenv("CPO_VIF_THRESHOLD", "10"))
 
-    with tab_upload:
-        st.subheader("Quality Table Inputs")
-        uploaded_files = st.file_uploader(
-            "Upload one or more quality-table Excel files",
+    with st.sidebar:
+        st.header("Run")
+        output_dir = st.text_input("Output directory", value=default_output)
+        target_col = st.text_input("Target column", value=default_target)
+        year_filter = st.text_input("Year filter", value="all")
+        vif_threshold = st.number_input("VIF threshold", min_value=1.0, max_value=100.0, value=default_vif)
+        run_internal = st.checkbox("Internal factors", value=True)
+        run_risk = st.checkbox("Risk scoring", value=True)
+
+    tab_run, tab_results, tab_files = st.tabs(["Run", "Results", "Files"])
+
+    with tab_run:
+        st.subheader("Quality Tables")
+        quality_uploads = st.file_uploader(
+            "Upload quality-table Excel files",
             type=["xlsx", "xlsm", "xls"],
             accept_multiple_files=True,
         )
-        path_text = st.text_area(
-            "Or enter server-side file/directory paths, one per line",
-            value="",
-            help="Use this when the app is deployed inside the same environment as the data files.",
-        )
+        quality_paths = st.text_area("Server-side quality paths", value=default_input, height=90)
 
-        st.subheader("Field Mapping")
-        target_col = st.text_input("Target column", value="feed_p_ppm")
-        join_keys = st.text_input("Quality-table join keys", value="")
-        factor_fields = st.text_input("Factor fields", value="")
-        process_fields = st.text_input("Process-response fields", value="")
-        year_filter = st.text_input("Optional year filter", value="all")
-
-        if st.button("Validate inputs", type="primary"):
-            input_paths = [line.strip() for line in path_text.splitlines() if line.strip()]
-            with tempfile.TemporaryDirectory() as tmp:
-                for uploaded in uploaded_files:
-                    target = Path(tmp) / uploaded.name
-                    target.write_bytes(uploaded.getbuffer())
-                    input_paths.append(str(target))
-
-                if not input_paths:
-                    st.error("Upload at least one Excel file or enter a server-side path.")
-                else:
-                    try:
-                        summary = run_data_validation(
-                            input_paths,
-                            year_filter=year_filter,
-                            target_col=target_col,
-                            join_keys=join_keys,
-                            factor_fields=factor_fields,
-                            process_response_fields=process_fields,
-                        )
-                    except Exception as exc:  # pragma: no cover - UI guardrail
-                        st.exception(exc)
-                    else:
-                        st.success(f"Validation status: {summary['status']}")
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric("Files", summary["file_count"])
-                        col2.metric("Rows", summary["row_count"])
-                        col3.metric("Target rows", summary["valid_target_rows"])
-                        col4.metric("Template issues", summary["template_issue_count"])
-                        st.json(summary)
-
-    with tab_core:
-        st.subheader("Core Quality Factor Screening")
-        core_input = st.text_input("Processed quality table", value="local_runs/final_feed_2024_2025/processed/model_source.csv")
-        core_target = st.text_input("Core target", value="feed_p_ppm")
-        if st.button("Run core factor screening"):
-            try:
-                summary = run_core_factor_check(core_input, target_col=core_target)
-            except Exception as exc:  # pragma: no cover - UI guardrail
-                st.exception(exc)
-            else:
-                st.success(f"Core screening status: {summary['status']}")
-                st.metric("Supported factors", summary["supported_factor_count"])
-                st.json(summary)
-
-    with tab_internal:
-        st.subheader("Direct Internal Factor Validation")
-        quality_input = st.text_input("Quality/model table for join", value="local_runs/final_feed_2024_2025/processed/model_source.csv")
+        st.subheader("Internal Factors")
         internal_uploads = st.file_uploader(
-            "Upload one or more internal factor tables",
+            "Upload internal factor tables",
             type=["csv", "xlsx", "xlsm", "xls"],
             accept_multiple_files=True,
         )
-        internal_input = st.text_area("Or enter internal factor file/directory paths, one per line", value="")
-        internal_keys = st.text_input("Join keys", value="date,feed_tank")
-        internal_fields = st.text_input("Internal factor fields", value="")
-        internal_process = st.text_input("Process-response fields", value="")
-        internal_target = st.text_input("Internal validation target", value="feed_p_ppm")
-        if st.button("Run internal factor validation"):
-            internal_paths = [line.strip() for line in internal_input.splitlines() if line.strip()]
+        internal_paths = st.text_area("Server-side internal factor paths", value="", height=90)
+
+        st.subheader("Mapping")
+        join_keys = st.text_input("Join keys", value="date,feed_tank")
+        quality_factor_fields = st.text_input("Quality factor fields", value="")
+        process_response_fields = st.text_input("Quality process-response fields", value="")
+        internal_factor_fields = st.text_input("Internal factor fields", value="")
+        internal_process_fields = st.text_input("Internal process-response fields", value="")
+
+        if st.button("Run delivery", type="primary"):
             with tempfile.TemporaryDirectory() as tmp:
-                for uploaded in internal_uploads:
-                    target = Path(tmp) / uploaded.name
-                    target.write_bytes(uploaded.getbuffer())
-                    internal_paths.append(str(target))
+                tmp_path = Path(tmp)
+                quality_inputs = _split_paths(quality_paths) + _save_uploads(quality_uploads, tmp_path)
+                internal_inputs = _split_paths(internal_paths) + _save_uploads(internal_uploads, tmp_path)
+                config = EnterpriseRunConfig(
+                    quality_inputs=quality_inputs,
+                    internal_inputs=internal_inputs,
+                    output_dir=output_dir,
+                    target_col=target_col,
+                    year_filter=year_filter,
+                    join_keys=join_keys,
+                    quality_factor_fields=quality_factor_fields,
+                    process_response_fields=process_response_fields,
+                    internal_factor_fields=internal_factor_fields,
+                    internal_process_response_fields=internal_process_fields,
+                    vif_threshold=vif_threshold,
+                    run_internal_factors=run_internal,
+                    run_risk_scoring=run_risk,
+                )
                 try:
-                    summary = run_internal_factor_check(
-                        input_path=internal_paths or None,
-                        quality_input=quality_input or None,
-                        join_keys=internal_keys,
-                        target_col=internal_target,
-                        factor_fields=internal_fields,
-                        process_response_fields=internal_process,
-                    )
+                    with st.spinner("Running PhosphorAI delivery workflow..."):
+                        result = run_enterprise_delivery(config)
                 except Exception as exc:  # pragma: no cover - UI guardrail
                     st.exception(exc)
                 else:
-                    st.success(f"Internal validation status: {summary['status']}")
-                    st.json(summary)
+                    st.session_state["delivery_result"] = result
+                    st.success(f"Run complete: {result['run_dir']}")
 
-    with tab_risk:
-        st.subheader("Risk Scoring")
-        risk_input = st.text_input("Risk input model_source.csv", value="local_runs/final_feed_2024_2025/processed/model_source.csv")
-        risk_output = st.text_input("Risk output directory", value="local_runs/ui_risk_scoring/reports/risk_scoring")
-        risk_target = st.text_input("Risk target", value="feed_p_ppm")
-        if st.button("Run risk scoring"):
-            try:
-                summary = run_risk_scoring(risk_input, risk_output, target_col=risk_target)
-            except Exception as exc:  # pragma: no cover - UI guardrail
-                st.exception(exc)
-            else:
-                st.success("Risk scoring complete")
-                decision = summary.get("decision_summary", {})
-                st.metric("Selected p80 recall", decision.get("selected_model_p80_recall"))
-                st.metric("Selected p80 false negative rate", decision.get("selected_model_p80_false_negative_rate"))
-                st.json(summary)
+    result = st.session_state.get("delivery_result")
+    with tab_results:
+        if not result:
+            st.info("Run a delivery workflow to view results.")
+        else:
+            st.subheader("Quality")
+            _show_quality(result.get("quality_validation"))
+            st.subheader("Core Factors")
+            core = result.get("core_factors")
+            col1, col2 = st.columns(2)
+            col1.metric("Supported", _metric_value(core, "supported_factor_count"))
+            col2.metric("Weak", _metric_value(core, "weak_factor_count"))
+            st.subheader("Internal Factors")
+            _show_internal(result.get("internal_factors"))
+            st.subheader("Risk Scoring")
+            _show_risk(result.get("risk_scoring"))
 
-    with tab_export:
-        st.subheader("Export")
-        st.write("Workflow modules write CSV and JSON-compatible summaries to their selected output directories.")
-        st.caption("Exports are designed for enterprise review and manual decision support, not automatic process control.")
+    with tab_files:
+        if not result:
+            st.info("Run a delivery workflow to view generated files.")
+        else:
+            st.subheader("Report Package")
+            st.write(f"Run directory: `{result['run_dir']}`")
+            st.write(f"HTML summary: `{result['enterprise_summary_html']}`")
+            output_files = result.get("output_files", {})
+            if output_files:
+                st.dataframe(
+                    [{"name": name, "path": path} for name, path in output_files.items()],
+                    use_container_width=True,
+                )
+            with st.expander("Raw summary"):
+                st.json(result)
 
 
 if __name__ == "__main__":

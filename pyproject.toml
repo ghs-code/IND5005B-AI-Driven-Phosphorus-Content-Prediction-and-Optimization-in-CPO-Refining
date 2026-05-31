@@ -17,10 +17,6 @@ dependencies = [
   "scipy",
   "seaborn",
   "statsmodels",
-]
-
-[project.optional-dependencies]
-ui = [
   "streamlit",
 ]
 

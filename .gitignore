@@ -24,8 +24,14 @@ env/
 local_data/
 local_reports/
 local_runs/
+local_archive/
+outputs/
 
 # Local Reference Files
 Reference/
 Plan.md
+PLAN.md
+plan.md
 SUMMARY.md
+summary.md
+reference/
