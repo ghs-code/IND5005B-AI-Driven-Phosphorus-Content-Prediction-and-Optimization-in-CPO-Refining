@@ -1,4 +1,4 @@
-本目录为核心变量随机森林结果占位目录。
+# Core-Feature Model Reports Placeholder
 
-真实结果请保存在本地目录 `local_reports/random_forest/core_feature/`。
-
+Generated core-feature model artifacts should remain in ignored local run
+directories.

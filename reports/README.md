@@ -1,4 +1,6 @@
-本目录不存放真实分析报告、图表或模型结果。
+# Reports Placeholder
 
-出于保密要求，所有报告类产物请仅保存在本地目录 `local_reports/`，不要提交到 Git 仓库。
+Do not commit confidential analysis outputs here.
 
+Use ignored local directories such as `local_runs/<run_id>/reports/` or
+`local_reports/` for generated artifacts.

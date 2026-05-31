@@ -1,3 +1,3 @@
-本目录为历史随机森林结果占位目录。
+# Legacy Model Reports Placeholder
 
-若需保留历史本地结果，请存放在 `local_reports/random_forest/legacy/`。
+Legacy model artifacts should remain in ignored local run directories.

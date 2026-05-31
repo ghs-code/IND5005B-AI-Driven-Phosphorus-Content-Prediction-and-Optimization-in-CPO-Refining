@@ -19,6 +19,11 @@ dependencies = [
   "statsmodels",
 ]
 
+[project.optional-dependencies]
+ui = [
+  "streamlit",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

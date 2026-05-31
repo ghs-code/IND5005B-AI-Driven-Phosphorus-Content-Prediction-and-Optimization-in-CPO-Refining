@@ -1,4 +1,4 @@
-本目录为预处理报告占位目录。
+# Preprocessing Reports Placeholder
 
-真实预处理报告请保存在本地目录 `local_reports/preprocessing/`。
-
+Preprocessing reports generated from confidential data should remain in ignored
+local run directories.

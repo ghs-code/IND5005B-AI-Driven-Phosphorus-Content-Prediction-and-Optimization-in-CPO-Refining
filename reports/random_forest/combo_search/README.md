@@ -1,4 +1,4 @@
-本目录为随机森林变量组合搜索结果占位目录。
+# Feature-Combination Search Placeholder
 
-真实结果请保存在本地目录 `local_reports/random_forest/combo_search/`。
-
+Generated feature-combination search artifacts should remain in ignored local
+run directories.

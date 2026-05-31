@@ -1,4 +1,4 @@
-本目录为随机森林报告占位目录。
+# Random Forest Reports Placeholder
 
-真实随机森林产物请保存在本地目录 `local_reports/random_forest/`。
-
+Random forest and model-comparison outputs generated from confidential data
+should remain in ignored local run directories.

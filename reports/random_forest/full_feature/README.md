@@ -1,4 +1,4 @@
-本目录为全量特征随机森林结果占位目录。
+# Full-Feature Model Reports Placeholder
 
-真实结果请保存在本地目录 `local_reports/random_forest/full_feature/`。
-
+Generated full-feature model artifacts should remain in ignored local run
+directories.
