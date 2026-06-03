@@ -28,6 +28,7 @@ local_archive/
 outputs/
 
 # Local Reference Files
+AGENTS.md
 Reference/
 Plan.md
 PLAN.md
