@@ -7,6 +7,7 @@ import pandas as pd
 from cpo_phosphorus.workflows.core_factors import run_core_factor_check
 from cpo_phosphorus.workflows.delivery import EnterpriseRunConfig, run_enterprise_delivery
 from cpo_phosphorus.workflows.internal_factors import run_internal_factor_check
+from cpo_phosphorus.workflows.risk_scoring import build_review_priority_ranking
 from cpo_phosphorus.workflows.validate_data import run_data_validation
 
 
@@ -205,6 +206,31 @@ class WorkflowSkeletonTests(unittest.TestCase):
         self.assertEqual(summary["join_diagnostics"]["status"], "missing_join_keys")
         self.assertEqual(summary["evidence_counts"].get("not_assessable"), 1)
 
+    def test_limited_human_review_ranking_sorts_candidates(self):
+        predictions = pd.DataFrame(
+            {
+                "feature_group": ["context_aware", "context_aware", "context_aware", "quality_only"],
+                "model": ["ridge", "ridge", "ridge", "ridge"],
+                "date": pd.date_range("2025-01-01", periods=4),
+                "feed_tank": ["A", "B", "C", "D"],
+                "actual": [9.0, 5.0, 8.0, 99.0],
+                "predicted": [7.0, 10.0, 8.5, 100.0],
+            }
+        )
+        summary = {
+            "best_random_split_model": {"feature_group": "context_aware", "model": "ridge"},
+            "risk_thresholds": [{"threshold_name": "p80", "threshold_ppm": 8.0}],
+        }
+
+        ranking, candidates, policy = build_review_priority_ranking(predictions, summary, top_n=2)
+
+        self.assertEqual(ranking["predicted"].tolist(), [10.0, 8.5, 7.0])
+        self.assertEqual(candidates["review_priority_rank"].tolist(), [1, 2])
+        self.assertEqual(candidates["predicted_high_risk"].tolist(), [True, True])
+        self.assertIn("manual review queue", policy["trigger"])
+        self.assertIn("descending order", policy["ranking_logic"])
+        self.assertIn("does not authorize automatic batch isolation", policy["decision_boundary"])
+
     def test_enterprise_delivery_writes_to_selected_output_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -237,15 +263,28 @@ class WorkflowSkeletonTests(unittest.TestCase):
             run_dir = output / "test_run"
             self.assertEqual(result["status"], "complete")
             self.assertTrue((run_dir / "run_manifest.json").exists())
+            self.assertTrue((run_dir / "run_log.txt").exists())
             self.assertTrue((run_dir / "enterprise_summary.html").exists())
             self.assertTrue((run_dir / "core_factor_screening.csv").exists())
             self.assertTrue((run_dir / "internal_factor_evidence.csv").exists())
             self.assertTrue((run_dir / "processed" / "model_source.csv").exists())
+            self.assertEqual(result["output_files"]["run_log"], str(run_dir / "run_log.txt"))
+            self.assertEqual(result["run_log_path"], str(run_dir / "run_log.txt"))
             self.assertFalse((root / "reports").exists())
             self.assertFalse((root / "outputs").exists())
+            run_log = (run_dir / "run_log.txt").read_text(encoding="utf-8")
+            self.assertIn("run_started", run_log)
+            self.assertIn("data_validation_completed", run_log)
+            self.assertIn("internal_factor_validation_completed", run_log)
+            self.assertIn("risk_scoring_skipped", run_log)
+            self.assertIn("run_completed", run_log)
             html = (run_dir / "enterprise_summary.html").read_text(encoding="utf-8")
             self.assertIn("PhosphorAI Enterprise Summary", html)
             self.assertIn("Quality rows", html)
+            self.assertIn("Limited Human Review", html)
+            self.assertIn("PGEO Data Roadmap Discussion", html)
+            self.assertIn("does not authorize automatic batch isolation", html)
+            self.assertIn("supplier/mill", html)
 
 
 if __name__ == "__main__":

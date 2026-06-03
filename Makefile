@@ -25,7 +25,7 @@ install:
 	$(PIP) install -e .
 
 ui:
-	$(PYTHON) scripts/run_ui.py
+	@$(PYTHON) scripts/run_ui.py
 
 test:
 	$(PYTHON) -m unittest discover -s tests
